@@ -1,13 +1,13 @@
 {
-	"admin/services/pw2_guard": {
-		"title": "PW2 Guard",
-		"order": 70,
+	"admin/services/passwall2/bypass": {
+		"title": "Bypass",
+		"order": 97,
 		"action": {
 			"type": "view",
-			"path": "pw2_guard/status"
+			"path": "bypass/status"
 		},
 		"depends": {
-			"acl": [ "luci-app-pw2-guard" ],
+			"acl": [ "luci-app-bypass" ],
 			"uci": { "passwall2": true }
 		}
 	}
