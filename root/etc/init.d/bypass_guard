@@ -6,6 +6,15 @@ CONF="pw2_guard"
 SECTION="global"
 readonly LAN_IF=$(uci -q get network.lan.device || uci -q get network.lan.ifname || echo "br-lan")
 
+# PassWall2 tags every connection it proxies with a conntrack mark (FWMARK in its nftables.sh: PSW2_RULE sets
+# "ct mark" only for flows that take a proxy rule). Direct flows, bypass_guard's own and PassWall2's, never get it.
+# Read from PassWall2 itself so a changed value is followed; the default is the current one.
+get_psw_fwmark() {
+    local m
+    m=$(sed -n 's/^FWMARK="\(0x[0-9a-fA-F]*\)".*/\1/p' /usr/share/passwall2/nftables.sh 2>/dev/null | head -n 1)
+    echo "${m:-0x50535732}"
+}
+
 # Current L3 devices of wan/wan6 as an nft set literal, e.g. { "pppoe-wan" }.
 # Evaluated at call time so PPPoE (device name only exists once connected) works.
 get_wan_set() {
@@ -45,6 +54,7 @@ remove_bypass_rules() {
 
 setup_nft() {
     local wan_set=$(get_wan_set)
+    local psw_mark=$(get_psw_fwmark)
 
     nft add table inet bypass_logic 2>/dev/null
     if ! nft list chain inet bypass_logic static_privilege >/dev/null 2>&1; then
@@ -101,23 +111,27 @@ setup_nft() {
     nft "add set inet bypass_logic acct_up6 { type ipv6_addr; counter; }" 2>/dev/null
     nft "add set inet bypass_logic acct_dn6 { type ipv6_addr; counter; }" 2>/dev/null
 
+    # Only traffic that PassWall2 proxies is counted (ct mark == PassWall2's FWMARK, see get_psw_fwmark): the page
+    # shows what a client sends through the proxy. Direct traffic (bypass_guard rules, PassWall2 direct rules) and
+    # traffic to the router itself are not included. The ct mark test must stay in front of the set lookup in
+    # every rule: a set element counter is bumped as soon as its lookup matches, whatever follows in the rule.
     # Upload is counted in prerouting, download in postrouting. Unlike the forward hook these also see the
-    # traffic PassWall2 handles: its TPROXY / REDIRECT delivers packets to a local process (input) and the
-    # replies are generated locally (output), neither of which is ever "forwarded".
+    # traffic PassWall2 handles: its TPROXY delivers packets to a local process (input) and the replies are
+    # generated locally (output), neither of which is ever "forwarded". The upload chain has to run after
+    # PassWall2's own prerouting chains (priority -151 and later), which is where the first packet of a flow gets
+    # its ct mark; the chains are recreated so an older priority is replaced.
     # The old forward-hook chain of earlier versions is removed.
     nft delete chain inet bypass_logic client_acct 2>/dev/null
-    if ! nft list chain inet bypass_logic acct_in >/dev/null 2>&1; then
-        nft "add chain inet bypass_logic acct_in { type filter hook prerouting priority -420; policy accept; }"
-    fi
-    if ! nft list chain inet bypass_logic acct_out >/dev/null 2>&1; then
-        nft "add chain inet bypass_logic acct_out { type filter hook postrouting priority 0; policy accept; }"
-    fi
-    nft flush chain inet bypass_logic acct_in
-    nft flush chain inet bypass_logic acct_out
-    nft add rule inet bypass_logic acct_in iifname "$LAN_IF" ip saddr @acct_up4 counter
-    nft add rule inet bypass_logic acct_in iifname "$LAN_IF" ip6 saddr @acct_up6 counter
-    nft add rule inet bypass_logic acct_out oifname "$LAN_IF" ip daddr @acct_dn4 counter
-    nft add rule inet bypass_logic acct_out oifname "$LAN_IF" ip6 daddr @acct_dn6 counter
+    nft flush chain inet bypass_logic acct_in 2>/dev/null
+    nft delete chain inet bypass_logic acct_in 2>/dev/null
+    nft flush chain inet bypass_logic acct_out 2>/dev/null
+    nft delete chain inet bypass_logic acct_out 2>/dev/null
+    nft "add chain inet bypass_logic acct_in { type filter hook prerouting priority -50; policy accept; }"
+    nft "add chain inet bypass_logic acct_out { type filter hook postrouting priority 0; policy accept; }"
+    nft add rule inet bypass_logic acct_in iifname "$LAN_IF" ct mark $psw_mark ip saddr @acct_up4 counter
+    nft add rule inet bypass_logic acct_in iifname "$LAN_IF" ct mark $psw_mark ip6 saddr @acct_up6 counter
+    nft add rule inet bypass_logic acct_out oifname "$LAN_IF" ct mark $psw_mark ip daddr @acct_dn4 counter
+    nft add rule inet bypass_logic acct_out oifname "$LAN_IF" ct mark $psw_mark ip6 daddr @acct_dn6 counter
 
     if ! nft list chain inet bypass_logic dynamic_logic >/dev/null 2>&1; then
         nft "add chain inet bypass_logic dynamic_logic { type filter hook prerouting priority -400; policy accept; }"
@@ -146,7 +160,9 @@ setup_nft() {
     nft add rule inet bypass_logic dynamic_logic ip saddr @psw_vpn_clients meta mark != 0xff counter meta mark set 0 accept comment "AGENT-PASS"
     nft add rule inet bypass_logic dynamic_logic ip6 saddr @psw_vpn_clients6 meta mark != 0xff counter meta mark set 0 accept comment "AGENT-PASS-V6"
 
-    nft add rule inet bypass_logic dynamic_logic iifname "$LAN_IF" counter meta mark set 0xff accept comment "Global-Bypass-PassWall2"
+    # Everything left from the LAN here belongs to devices that are not VPN clients: mark it 0xff so
+    # PassWall2 leaves it alone and it goes out directly.
+    nft add rule inet bypass_logic dynamic_logic iifname "$LAN_IF" counter meta mark set 0xff accept comment "Non-VPN-Client-Direct"
 
 }
 
