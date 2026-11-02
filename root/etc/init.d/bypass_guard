@@ -52,7 +52,8 @@ remove_bypass_rules() {
     [ "$cleaned" -gt 0 ] && logger -t bypass_guard "Cleaned up $cleaned residual rules from passwall2."
 }
 
-# Earlier versions identified VPN clients by IP address (sets psw_vpn_clients*, quic_direct_clients*) and kept the
+# Earlier versions identified VPN clients by IP address (sets psw_vpn_clients*, quic_direct_clients*; later a
+# server_macs set for the 7844 rules, which now apply to every VPN client) and kept the
 # accounting sets as plain sets. Remove what the new rules replace; everything that is removed is re-created by
 # setup_nft. The accounting sets are kept (with their counters) once they have the new, dynamic definition.
 migrate_legacy_nft() {
@@ -63,12 +64,12 @@ migrate_legacy_nft() {
         nft flush chain inet bypass_logic $c 2>/dev/null
         nft delete chain inet bypass_logic $c 2>/dev/null
     done
-    if nft list chain inet bypass_logic static_privilege 2>/dev/null | grep -q 'quic_direct_clients'; then
+    if nft list chain inet bypass_logic static_privilege 2>/dev/null | grep -Eq 'quic_direct_clients|server_macs'; then
         for c in P2P-Tunnel-Setup-tcp-Direct P2P-Tunnel-Setup-udp-Direct P2P-Tunnel-Setup6-tcp-Direct P2P-Tunnel-Setup6-udp-Direct; do
             del_rules_by_comment static_privilege "$c"
         done
     fi
-    for s in psw_vpn_clients psw_vpn_clients6 quic_direct_clients quic_direct_clients6; do
+    for s in psw_vpn_clients psw_vpn_clients6 quic_direct_clients quic_direct_clients6 server_macs; do
         nft delete set inet bypass_logic $s 2>/dev/null
     done
     for s in acct_up4 acct_dn4 acct_up6 acct_dn6; do
@@ -89,27 +90,28 @@ setup_nft() {
         nft "add chain inet bypass_logic static_privilege_output { type filter hook output priority -410; policy accept; }" 2>/dev/null
     fi
 
-    # VPN clients are identified by MAC address (the "mac" of the DHCP host entries tagged VPN / Server), not by IP:
+    # VPN clients are identified by MAC address (the "mac" of the DHCP host entries tagged VPN), not by IP:
     # a device keeps being a VPN client whatever addresses it takes (privacy / temporary IPv6, tokens, renumbering).
-    # The sets are refilled by sync_clients; their element is a bare MAC.
+    # The set is refilled by sync_clients; its elements are bare MACs.
     nft "add set inet bypass_logic vpn_macs { type ether_addr; }" 2>/dev/null
-    nft "add set inet bypass_logic server_macs { type ether_addr; }" 2>/dev/null
     nft "add set inet bypass_logic qb_dynamic_ports { type inet_service; flags timeout; }" 2>/dev/null
     nft "add set inet bypass_logic qb_outer_ports { type inet_service; }" 2>/dev/null
     nft "add set inet bypass_logic stun_direct { type ipv4_addr; flags interval; }" 2>/dev/null
 
-    # Hosts also tagged Server: their connections to remote port 7844 go direct. (Rules of earlier versions are removed by migrate_legacy_nft.)
+    # Connections of the VPN clients to remote port 7844 go direct: these set up peer-to-peer tunnels (Cloudflare
+    # tunnels, NetBird, WireGuard and similar) and have to leave without the proxy.
+    # (Rules of earlier versions are removed by migrate_legacy_nft.)
     if ! nft list table inet bypass_logic | grep -q "P2P-Tunnel-Setup-tcp-Direct"; then
-        nft add rule inet bypass_logic static_privilege iifname "$LAN_IF" ether saddr @server_macs meta nfproto ipv4 tcp dport 7844 counter meta mark set 0xff accept comment "P2P-Tunnel-Setup-tcp-Direct"
+        nft add rule inet bypass_logic static_privilege iifname "$LAN_IF" ether saddr @vpn_macs meta nfproto ipv4 tcp dport 7844 counter meta mark set 0xff accept comment "P2P-Tunnel-Setup-tcp-Direct"
     fi
     if ! nft list table inet bypass_logic | grep -q "P2P-Tunnel-Setup-udp-Direct"; then
-        nft add rule inet bypass_logic static_privilege iifname "$LAN_IF" ether saddr @server_macs meta nfproto ipv4 udp dport 7844 counter meta mark set 0xff accept comment "P2P-Tunnel-Setup-udp-Direct"
+        nft add rule inet bypass_logic static_privilege iifname "$LAN_IF" ether saddr @vpn_macs meta nfproto ipv4 udp dport 7844 counter meta mark set 0xff accept comment "P2P-Tunnel-Setup-udp-Direct"
     fi
     if ! nft list table inet bypass_logic | grep -q "P2P-Tunnel-Setup6-tcp-Direct"; then
-        nft add rule inet bypass_logic static_privilege iifname "$LAN_IF" ether saddr @server_macs meta nfproto ipv6 tcp dport 7844 counter meta mark set 0xff accept comment "P2P-Tunnel-Setup6-tcp-Direct"
+        nft add rule inet bypass_logic static_privilege iifname "$LAN_IF" ether saddr @vpn_macs meta nfproto ipv6 tcp dport 7844 counter meta mark set 0xff accept comment "P2P-Tunnel-Setup6-tcp-Direct"
     fi
     if ! nft list table inet bypass_logic | grep -q "P2P-Tunnel-Setup6-udp-Direct"; then
-        nft add rule inet bypass_logic static_privilege iifname "$LAN_IF" ether saddr @server_macs meta nfproto ipv6 udp dport 7844 counter meta mark set 0xff accept comment "P2P-Tunnel-Setup6-udp-Direct"
+        nft add rule inet bypass_logic static_privilege iifname "$LAN_IF" ether saddr @vpn_macs meta nfproto ipv6 udp dport 7844 counter meta mark set 0xff accept comment "P2P-Tunnel-Setup6-udp-Direct"
     fi
     del_rules_by_comment static_privilege "qB-tcp-Inbound-Mark-Direct"
     del_rules_by_comment static_privilege "qB-udp-Inbound-Mark-Direct"
@@ -192,8 +194,10 @@ setup_nft() {
     nft add rule inet bypass_logic dynamic_logic iifname "$LAN_IF" ether saddr @vpn_macs meta nfproto ipv6 meta mark != 0xff counter meta mark set 0 accept comment "AGENT-PASS-V6"
 
     # Everything left from the LAN here belongs to devices that are not VPN clients: mark it 0xff so
-    # PassWall2 leaves it alone and it goes out directly.
-    nft add rule inet bypass_logic dynamic_logic iifname "$LAN_IF" counter meta mark set 0xff accept comment "Non-VPN-Client-Direct"
+    # PassWall2 leaves it alone and it goes out directly. Packets that already carry 0xff were sent direct by a
+    # rule of static_privilege (this chain still sees them after that chain accepted them): they are not counted
+    # a second time, and there is nothing left to do for them.
+    nft add rule inet bypass_logic dynamic_logic iifname "$LAN_IF" meta mark != 0xff counter meta mark set 0xff accept comment "Non-VPN-Client-Direct"
 
 }
 
@@ -203,25 +207,20 @@ sync_clients() {
     local vpn_sections=$(uci show dhcp | grep "@host" | grep "\.tag" | grep -i "VPN" | cut -d. -f2 | sort -u)
 
     local nft_file="/tmp/bypass_guard_sync.nft"
-    local section tags is_server mac
+    local section mac
 
-    # Flush and refill both sets in ONE nft transaction, so there is no empty window and a failure leaves the
-    # previous contents untouched. A host tagged Server is also a VPN client (the tags are checked above).
+    # Flush and refill the set in ONE nft transaction, so there is no empty window and a failure leaves the
+    # previous contents untouched. (The Server tag is only a label on the page; it needs no rule.)
     {
         echo "flush set inet bypass_logic vpn_macs"
-        echo "flush set inet bypass_logic server_macs"
 
         for section in $vpn_sections; do
-            tags=$(uci -q get dhcp.$section.tag)
-            is_server=$(echo "$tags" | grep -iw "server")
-
             for mac in $(uci -q get "dhcp.$section.mac"); do
                 case "$mac" in
                     ??:??:??:??:??:??) ;;
                     *) continue ;;
                 esac
                 echo "add element inet bypass_logic vpn_macs { $mac }"
-                [ -n "$is_server" ] && echo "add element inet bypass_logic server_macs { $mac }"
             done
         done
     } > "$nft_file"
@@ -239,7 +238,7 @@ sync_clients() {
     if [ -z "$vpn_sections" ]; then
         logger -t bypass_guard "Sync: No VPN tagged hosts detected, client sets cleared."
     else
-        logger -t bypass_guard "Sync: Updated VPN and Server (P2P tunnel setup) clients."
+        logger -t bypass_guard "Sync: Updated VPN clients."
     fi
 }
 
