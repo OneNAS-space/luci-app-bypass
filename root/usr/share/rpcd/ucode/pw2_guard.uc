@@ -101,11 +101,11 @@ function friendly_action(key) {
 		if (index(key, 'STUN-Direct') >= 0)
 			return 'Direct / STUN Penetration';
 
+		if (index(key, 'Non-VPN-Client') >= 0)
+			return 'Direct / Non-VPN Devices';
+
 		return 'Direct / Bypass';
 	}
-
-	if (index(key, 'Global-Bypass') >= 0)
-		return 'Direct / Global Whitelist';
 
 	if (index(key, 'PASS') >= 0)
 		return 'Proxy / Agent Redirect';
