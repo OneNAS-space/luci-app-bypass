@@ -12,7 +12,7 @@ RULE_FILE="$CACHE_DIR/$SID.tcp_fix_rule"
 PORT_FILE="/tmp/natmap_qb_inner_port"
 LAST_PORT_FILE="$CACHE_DIR/natmap_last_port"
 
-[ "$(uci -q get pw2_guard.global.enable_natmap)" != "1" ] && exit 0
+[ "$(uci -q get bypass.global.enable_natmap)" != "1" ] && exit 0
 
 if [ -z "$OUTER_PORT" ] || [ -z "$INNER_PORT" ]; then
     exit 1
@@ -39,6 +39,6 @@ if [ "$PROTOCOL" = "udp" ]; then
             echo "iifname __WAN__ meta nfproto ipv4 tcp dport $OUTER_PORT counter dnat ip to $REAL_TARGET_IP:$INNER_PORT"
             echo "iifname __WAN__ meta nfproto ipv6 tcp dport $OUTER_PORT counter dnat to :$INNER_PORT"
         } > "$RULE_FILE"
-        /etc/init.d/bypass_guard manage_natmap 1
+        /etc/init.d/bypass manage_natmap 1
     fi
 fi
