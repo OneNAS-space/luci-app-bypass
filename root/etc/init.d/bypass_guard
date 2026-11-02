@@ -214,7 +214,9 @@ sync_clients() {
 
             local macs=$(uci -q get "dhcp.$section.mac")
             for mac in $macs; do
-                local active_ips=$(ip neigh show | grep -i "$mac" | grep -E "REACHABLE|STALE|DELAY" | awk '{print $1}' | grep -v '^fe80')
+                # Only the LAN interface: a router that uses one MAC on its WAN and LAN (and sits on the same
+                # segment as this router through the modem) would otherwise also contribute its WAN-side addresses.
+                local active_ips=$(ip neigh show dev "$LAN_IF" | grep -i "$mac" | grep -E "REACHABLE|STALE|DELAY" | awk '{print $1}' | grep -v '^fe80')
                 for ip in $active_ips; do
                     emit_client "$ip" "$is_server"
                 done
