@@ -87,6 +87,7 @@ const CSS =
 	/* Traffic / Speed: two sort keys in one cell; the halves bring the padding so each is a big click target */
 	'.pg-clients .th.pg-split { padding:0 !important; }' +
 	'.pg-clients .pg-sort-half { display:inline-block; padding:.6rem .5rem; }' +
+	'.pg-rules .tr.pg-total .td { font-weight:bold; }' +
 	'@container (min-width: ' + RULES_TABLE_MIN + 'px) {' +
 	wideCss('.pg-rules') +
 	'  .pg-rules .td.pg-ract { white-space:normal; }' +
@@ -350,6 +351,19 @@ return view.extend({
 	},
 
 	updateRules(rules, dt) {
+		/* a last row adds up every Direct rule: what bypass_guard's rules let past PassWall2 in total */
+		const direct = rules.filter(r => /^Direct/.test(r.comment || ''));
+
+		if (direct.length > 1) {
+			rules = rules.concat([ {
+				name: _('Total (all Direct rules)'),
+				comment: 'Direct / Bypassed PassWall2',
+				packets: direct.reduce((a, r) => a + (Number(r.packets) || 0), 0),
+				bytes: direct.reduce((a, r) => a + (Number(r.bytes) || 0), 0),
+				total: true
+			} ]);
+		}
+
 		const key = rules.map(r => r.name).join('\n');
 
 		if (key !== this.ruleKey) {
@@ -369,7 +383,7 @@ return view.extend({
 
 				this.ruleRefs[r.name] = { pk: pk, by: by, sp: sp, sp2: sp2 };
 
-				rows.push(E('tr', { 'class': 'tr cbi-section-table-row cbi-rowstyle-' + (1 + i % 2) }, [
+				rows.push(E('tr', { 'class': 'tr cbi-section-table-row cbi-rowstyle-' + (1 + i % 2) + (r.total ? ' pg-total' : '') }, [
 					cell(textEl('span', '', r.name), 'pg-rname'),
 					cell(pk, 'pg-rpk', _('Packets')),
 					E('td', { 'class': 'td pg-rby', 'data-title': _('Bytes') }, [ by, sp ]),
