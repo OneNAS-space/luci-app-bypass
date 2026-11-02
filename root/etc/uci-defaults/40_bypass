@@ -1,0 +1,17 @@
+#!/bin/sh
+
+# Create /etc/config/bypass with both switches off.
+[ -e /etc/config/bypass ] || touch /etc/config/bypass
+
+if [ -z "$(uci -q get bypass.global)" ]; then
+	uci -q batch <<EOT
+set bypass.global=bypass
+set bypass.global.enable_bypass='0'
+set bypass.global.enable_natmap='0'
+commit bypass
+EOT
+fi
+
+rm -f /tmp/luci-indexcache*
+rm -rf /tmp/luci-modulecache/*
+exit 0
