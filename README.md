@@ -7,7 +7,8 @@ Bypass logic for PassWall2 routers (nft table `inet bypass_logic`) with a LuCI s
 ## What it does
 
 - DHCP hosts tagged `VPN` (static leases in `/etc/config/dhcp`) are handed to PassWall2; everything else goes direct.
-  A host also tagged `Server` additionally has its Cloudflare-tunnel traffic (port 7844, TCP and UDP) sent direct.
+  A host also tagged `Server` additionally has its connections to remote port 7844 (TCP and UDP) sent direct. These are the control connections that
+  set up peer-to-peer tunnels (Cloudflare tunnels, NetBird, WireGuard and similar).
   The client sets are rebuilt automatically when `dhcp`, `passwall2` or the WAN interfaces change.
 - Optional **Natmap qBittorrent port integration**: when the Natmap port changes, the firewall rules follow.
 - Per-client **traffic accounting** (nft sets with per-element counters), used by the page below.
@@ -17,6 +18,8 @@ Bypass logic for PassWall2 routers (nft table `inet bypass_logic`) with a LuCI s
 - **Main Switch** and **Natmap qB-port Direct** badges on one row. Click to enable / disable. Natmap shows
   Enabled / Disabled, or *Not Installed* (not clickable) when `/etc/config/natmap` is absent.
 - **Traffic Statistics** tab: packets, bytes and current speed of every rule, with a readable action label.
+  The qBittorrent rules (`qB-*` and the dual-stack port forwards) are only listed while Natmap is installed and
+  **Natmap qB-port Direct** is enabled.
 - **VPN Clients** tab: hostname, IP address over MAC, **traffic and speed** (↑ upload / ↓ download; speed colours
   match the realtime bandwidth page: download blue, upload green), IPv4 / IPv6 type and the `VPN` / `Server` tags.
 - Refreshes every 3 s **in place**: no scroll jumps, tabular digits and fixed minimum widths keep the columns still.
