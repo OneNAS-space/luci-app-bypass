@@ -1,7 +1,7 @@
 'use strict';
 
 /*
- * rpcd plugin for luci-app-pw2-guard (object: luci.pw2_guard)
+ * rpcd plugin for luci-app-bypass (object: luci.bypass)
  *
  *   status      -> { enabled, running, natmap, has_natmap }
  *   data        -> { rules: [...], clients: [...] }   (parsed from the nft table; clients carry up / down byte counters)
@@ -15,10 +15,10 @@
 import { cursor } from 'uci';
 import { popen, access, writefile } from 'fs';
 
-const CONF = 'pw2_guard';
+const CONF = 'bypass';
 const SECTION = 'global';
-const INIT = '/etc/init.d/bypass_guard';
-const NATMAP_SCRIPT = '/usr/share/bypass_guard/scripts/natmap_bypass.sh';
+const INIT = '/etc/init.d/bypass';
+const NATMAP_SCRIPT = '/usr/share/bypass/scripts/natmap_bypass.sh';
 const NFT = '/usr/sbin/nft';
 
 /* ---------- helpers ---------- */
@@ -203,7 +203,7 @@ function collect_rules(chains, show_qb) {
 
 /* ---------- clients ---------- */
 
-/* DHCP host entries tagged VPN: [ { name, macs: [ 'aa:bb:..' ], server } ]. The tags and MACs are what bypass_guard uses too. */
+/* DHCP host entries tagged VPN: [ { name, macs: [ 'aa:bb:..' ], server } ]. The tags and MACs are what bypass uses too. */
 function load_hosts() {
 	const ctx = cursor();
 	const list = [];
@@ -302,7 +302,7 @@ function fetch_acct(name) {
 }
 
 /*
- * One row per address a VPN client is currently seen with (bypass_guard learns them from the client's MAC; they expire
+ * One row per address a VPN client is currently seen with (bypass learns them from the client's MAC; they expire
  * after an hour without traffic), plus one "offline" row for every configured VPN MAC that has no address right now.
  */
 function collect_clients() {
@@ -482,4 +482,4 @@ const methods = {
 	}
 };
 
-return { 'luci.pw2_guard': methods };
+return { 'luci.bypass': methods };
