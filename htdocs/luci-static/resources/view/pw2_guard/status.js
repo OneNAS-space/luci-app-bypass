@@ -69,6 +69,7 @@ const CSS =
 	/* clients: IP over MAC, traffic over speed (two lines each) */
 	'.pg-clients .pg-ip, .pg-clients .pg-mac { display:block; }' +
 	'.pg-clients .pg-mac { font-size:.85em; opacity:.8; }' +
+	'.pg-clients .pg-offline { color:#d9534f; font-weight:bold; }' +
 	'.pg-clients .pg-cn, .pg-clients .pg-cs { display:inline-block; white-space:nowrap; text-align:center; }' +
 	'.pg-clients .pg-arr { font-size:.7em; margin-right:.3em; vertical-align:.08em; }' +
 	'.pg-clients .pg-cn { min-width:10.5ch; }' +
@@ -195,6 +196,14 @@ function cmpIp(a, b) {
 	}
 
 	return 0;
+}
+
+/* clients: by address, a client without an address (offline) ranks lowest */
+function cmpAddr(x, y) {
+	if (!!x.offline !== !!y.offline)
+		return x.offline ? -1 : 1;
+
+	return x.offline ? 0 : cmpIp(x.ip, y.ip);
 }
 
 function textEl(tag, cls, text) {
@@ -452,17 +461,20 @@ return view.extend({
 		const s = this.sort;
 		const by = {};
 
-		list.forEach(c => { by[c.ip] = c; });
+		list.forEach(c => { by[c.id] = c; });
 
 		const macOf = c => (c.mac && c.mac !== '\u2014') ? c.mac : '';
 		const byName = (a, b) => String(by[a].hostname || '').localeCompare(String(by[b].hostname || ''), undefined, { numeric: true, sensitivity: 'base' });
+
+		/* offline clients have no address family: they rank lowest */
+		const rank = c => c.offline ? -1 : (c.ip.indexOf(':') > -1 ? 1 : 0);
 
 		const cmp = (a, b) => {
 			const x = by[a], y = by[b];
 
 			switch (s.key) {
 			case 'addr':
-				return cmpIp(a, b);
+				return cmpAddr(x, y);
 			case 'mac':
 				/* clients without a known MAC (shown as a dash) rank lowest */
 				return macOf(x).localeCompare(macOf(y));
@@ -471,7 +483,7 @@ return view.extend({
 			case 'speed':
 				return (this.lastRate[a] || 0) - (this.lastRate[b] || 0);
 			case 'type':
-				return (a.indexOf(':') > -1 ? 1 : 0) - (b.indexOf(':') > -1 ? 1 : 0);
+				return rank(x) - rank(y);
 			case 'tag':
 				return (x.is_server ? 1 : 0) - (y.is_server ? 1 : 0);
 			}
@@ -479,11 +491,11 @@ return view.extend({
 			return byName(a, b);
 		};
 
-		/* equal values fall back to hostname, then address, so rows do not shuffle between polls */
-		const order = list.map(c => c.ip).sort((a, b) => {
+		/* equal values fall back to hostname, then address, then id, so rows do not shuffle between polls */
+		const order = list.map(c => c.id).sort((a, b) => {
 			const r = cmp(a, b);
 
-			return r ? r * s.dir : (byName(a, b) || cmpIp(a, b));
+			return r ? r * s.dir : (byName(a, b) || cmpAddr(by[a], by[b]) || (a < b ? -1 : a > b ? 1 : 0));
 		});
 
 		const sig = order.join('|');
@@ -493,8 +505,8 @@ return view.extend({
 
 		this.shownOrder = sig;
 
-		this.keepScroll(() => order.forEach((ip, i) => {
-			const ref = this.clientRefs[ip];
+		this.keepScroll(() => order.forEach((id, i) => {
+			const ref = this.clientRefs[id];
 
 			if (!ref || !ref.row)
 				return;
@@ -509,7 +521,7 @@ return view.extend({
 	updateClients(clients, dt) {
 		this.curClients = clients;
 
-		const key = JSON.stringify(clients.map(c => [ c.ip, c.mac, c.hostname, c.is_server ]));
+		const key = JSON.stringify(clients.map(c => [ c.id, c.ip, c.mac, c.hostname, c.is_server, !!c.offline, c.up != null ]));
 
 		if (key !== this.clientKey) {
 			this.clientKey = key;
@@ -518,7 +530,7 @@ return view.extend({
 			const crows = [ this.clientHeader() ];
 
 			if (!clients.length)
-				crows.push(emptyRow(5, _('No redirection clients found in NFT sets.')));
+				crows.push(emptyRow(5, _('No VPN clients configured.')));
 
 			clients.forEach((c, i) => {
 				const isV6 = String(c.ip).indexOf(':') > -1;
@@ -526,6 +538,44 @@ return view.extend({
 
 				if (c.is_server)
 					tag.appendChild(badge('Server', '#0069d6'));
+
+				/* a configured VPN device that has no address right now: red "Offline"; what it last moved, but no speed */
+				if (c.offline) {
+					const ref = { offline: true };
+					let traf = E('td', { 'class': 'td pg-traf' });
+
+					if (c.up != null) {
+						const mk = arrow => {
+							const v = textEl('span', '', '');
+
+							/* the figures sit in the first column of the grid, one per line, under the same header as the others */
+							return { v: v, o: E('span', { 'class': 'pg-cn', 'style': 'grid-column:1' }, [ textEl('span', 'pg-arr', arrow), v ]) };
+						};
+
+						ref.tu = mk('\u2191');
+						ref.td = mk('\u2193');
+
+						traf = E('td', { 'class': 'td pg-traf', 'title': _('Upload / Download') }, [
+							E('div', { 'class': 'pg-trafbox' }, [ ref.tu.o, ref.td.o ])
+						]);
+					}
+
+					this.clientRefs[c.id] = ref;
+
+					ref.row = E('tr', { 'class': 'tr cbi-section-table-row cbi-rowstyle-' + (1 + i % 2) }, [
+						cell(c.hostname ? textEl('span', '', c.hostname) : E('em', {}, [ 'unknown' ]), 'pg-host'),
+						E('td', { 'class': 'td pg-addr' }, [
+							textEl('div', 'pg-ip pg-offline', _('Offline')),
+							textEl('div', 'pg-mac', c.mac || '\u2014')
+						]),
+						traf,
+						cell(textEl('span', '', ''), 'pg-type'),
+						tag
+					]);
+
+					crows.push(ref.row);
+					return;
+				}
 
 				/* line 1: total sent / received, line 2: current speed */
 				/* the arrow is a separate, smaller glyph: the full-size one looks heavy next to the digits */
@@ -540,7 +590,7 @@ return view.extend({
 					su: mk('pg-cs pg-cs-up', '\u2191'), sd: mk('pg-cs pg-cs-dn', '\u2193')
 				};
 
-				this.clientRefs[c.ip] = ref;
+				this.clientRefs[c.id] = ref;
 
 				const traf = E('td', { 'class': 'td pg-traf', 'title': _('Upload / Download') }, [
 					/* a 2 x 2 grid: one row per direction (upload, download), traffic then speed in the columns */
@@ -566,22 +616,34 @@ return view.extend({
 		}
 
 		clients.forEach(c => {
-			const ref = this.clientRefs[c.ip];
+			const ref = this.clientRefs[c.id];
 
 			if (!ref)
 				return;
+
+			if (ref.offline) {
+				delete this.lastClient[c.id];
+				this.lastRate[c.id] = 0;
+
+				if (ref.tu && c.up != null) {
+					ref.tu.v.textContent = formatBytes(c.up);
+					ref.td.v.textContent = formatBytes(c.down);
+				}
+
+				return;
+			}
 
 			const up = c.up, down = c.down;
 
 			/* no counters (service started before the accounting rules existed): show dashes */
 			if (up == null || down == null) {
 				ref.tu.v.textContent = ref.td.v.textContent = ref.su.v.textContent = ref.sd.v.textContent = '\u2014';
-				delete this.lastClient[c.ip];
-				this.lastRate[c.ip] = 0;
+				delete this.lastClient[c.id];
+				this.lastRate[c.id] = 0;
 				return;
 			}
 
-			const prev = this.lastClient[c.ip];
+			const prev = this.lastClient[c.id];
 
 			/* a counter that went down was reset (service restarted): count that interval as zero */
 			const rate = (cur, old) => (old !== undefined && cur >= old && dt > 0) ? (cur - old) / dt : 0;
@@ -593,8 +655,8 @@ return view.extend({
 			ref.su.v.textContent = formatBytes(ru) + '/s';
 			ref.sd.v.textContent = formatBytes(rd) + '/s';
 
-			this.lastRate[c.ip] = ru + rd;
-			this.lastClient[c.ip] = { up: up, down: down };
+			this.lastRate[c.id] = ru + rd;
+			this.lastClient[c.id] = { up: up, down: down };
 		});
 
 		this.applySort();
