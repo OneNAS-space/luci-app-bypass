@@ -203,27 +203,31 @@ function collect_rules(chains, show_qb) {
 
 /* ---------- clients ---------- */
 
+/* DHCP host entries tagged VPN: [ { name, macs: [ 'aa:bb:..' ], server } ]. The tags and MACs are what bypass_guard uses too. */
 function load_hosts() {
 	const ctx = cursor();
-	const ip_map = {};
-	const mac_map = {};
+	const list = [];
 
 	ctx.foreach('dhcp', 'host', (s) => {
-		if (!s.name)
+		const tags = lc(join(' ', (type(s.tag) == 'array') ? s.tag : [ s.tag ?? '' ]));
+
+		if (index(tags, 'vpn') < 0 || !s.mac)
 			return;
 
-		if (s.ip)
-			ip_map[s.ip] = s.name;
+		const macs = [];
 
-		if (s.mac) {
-			const macs = (type(s.mac) == 'array') ? s.mac : split(s.mac, /[ \t]+/);
+		for (let m in ((type(s.mac) == 'array') ? s.mac : split(s.mac, /[ \t]+/))) {
+			m = lc(m);
 
-			for (let m in macs)
-				mac_map[lc(m)] = s.name;
+			if (match(m, /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/))
+				push(macs, m);
 		}
+
+		if (length(macs))
+			push(list, { name: s.name ?? 'Configured-Device', macs: macs, server: !!match(tags, /(^|[^a-z0-9_])server([^a-z0-9_]|$)/) });
 	});
 
-	return { ip_map: ip_map, mac_map: mac_map };
+	return list;
 }
 
 function load_neighbours() {
@@ -297,6 +301,10 @@ function fetch_acct(name) {
 	return out;
 }
 
+/*
+ * One row per address a VPN client is currently seen with (bypass_guard learns them from the client's MAC; they expire
+ * after an hour without traffic), plus one "offline" row for every configured VPN MAC that has no address right now.
+ */
 function collect_clients() {
 	load_sets();
 
@@ -311,50 +319,74 @@ function collect_clients() {
 
 	const hosts = load_hosts();
 	const neigh = load_neighbours();
+	const by_mac = {};
+	const online = {};
+	const shown = {};
 	const clients = [];
-	const seen = {};
 
-	const groups = [
-		[ 'psw_vpn_clients', false ],
-		[ 'psw_vpn_clients6', false ],
-		[ 'quic_direct_clients', true ],
-		[ 'quic_direct_clients6', true ]
-	];
+	for (let h in hosts)
+		for (let m in h.macs)
+			by_mac[m] = h;
 
-	for (let g in groups) {
-		for (let ip in fetch_set(g[0])) {
-			if (seen[ip] != null) {
-				if (g[1])
-					clients[seen[ip]].is_server = true;
+	for (let ip in [ ...fetch_set('vpn_seen4'), ...fetch_set('vpn_seen6') ]) {
+		const mac = neigh[ip] ?? '';
+		const h = (mac != '') ? by_mac[mac] : null;
 
+		if (mac != '')
+			online[mac] = true;
+
+		shown[ip] = true;
+
+		push(clients, {
+			id: ip,
+			ip: ip,
+			mac: (mac != '') ? uc(mac) : '\u2014',
+			hostname: h ? h.name : '',
+			is_server: h ? h.server : false,
+			up: up[ip] ?? 0,        /* bytes sent by the client / received by it through the proxy */
+			down: down[ip] ?? 0
+		});
+	}
+
+	/*
+	 * What an offline device last moved: the accounting counters outlive the learned address by up to a week, so the
+	 * counters of every address that is no longer listed are added up per MAC (the MAC of an address comes from the
+	 * neighbour table, best effort). The page shows these totals, never a speed.
+	 */
+	const past = {};
+
+	for (let ip in keys({ ...up, ...down })) {
+		const m = shown[ip] ? '' : (neigh[ip] ?? '');
+
+		if (m == '' || !by_mac[m])
+			continue;
+
+		if (!past[m])
+			past[m] = { up: 0, down: 0 };
+
+		past[m].up += up[ip] ?? 0;
+		past[m].down += down[ip] ?? 0;
+	}
+
+	for (let h in hosts) {
+		for (let m in h.macs) {
+			if (online[m])
 				continue;
+
+			const row = {
+				id: 'off:' + m,
+				offline: true,
+				mac: uc(m),
+				hostname: h.name,
+				is_server: h.server
+			};
+
+			if (past[m] && (past[m].up || past[m].down)) {
+				row.up = past[m].up;
+				row.down = past[m].down;
 			}
 
-			let name = hosts.ip_map[ip];
-			let mac = neigh[ip] ?? '';
-
-			if (!name && mac != '' && hosts.mac_map[mac])
-				name = hosts.mac_map[mac];
-
-			if (mac == '' && name) {
-				for (let m in keys(hosts.mac_map)) {
-					if (hosts.mac_map[m] == name) {
-						mac = m;
-						break;
-					}
-				}
-			}
-
-			seen[ip] = length(clients);
-
-			push(clients, {
-				ip: ip,
-				mac: (mac != '') ? uc(mac) : '—',
-				hostname: name ?? 'Configured-Device',
-				is_server: g[1],
-				up: up[ip],        /* bytes sent by the client / received by it; absent when not accounted yet */
-				down: down[ip]
-			});
+			push(clients, row);
 		}
 	}
 
