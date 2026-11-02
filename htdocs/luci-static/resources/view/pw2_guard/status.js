@@ -78,6 +78,14 @@ const CSS =
 	'.pg-clients .pg-cs-up { color:green; }' +
 	/* traffic column: as narrow as its content, the block centred under its header, its cells centred too */
 	'.pg-clients .pg-trafbox { display:inline-grid; grid-template-columns:auto auto; align-items:baseline; column-gap:.7em; row-gap:.05rem; text-align:center; }' +
+	/* sortable column headers, same look as the file manager: the whole header cell is the target */
+	'.pg-clients .pg-sort { cursor:pointer; user-select:none; }' +
+	'.pg-clients .pg-sort:hover, .pg-clients .pg-sort:focus-visible { background:rgba(128,128,128,.12); outline:none; }' +
+	'.pg-clients .pg-sortind { display:inline-block; margin-left:.35em; font-size:.7em; opacity:.7; vertical-align:middle; }' +
+	'.pg-clients .pg-sortind:empty { display:none; }' +
+	/* Traffic / Speed: two sort keys in one cell; the halves bring the padding so each is a big click target */
+	'.pg-clients .th.pg-split { padding:0 !important; }' +
+	'.pg-clients .pg-sort-half { display:inline-block; padding:.6rem .5rem; }' +
 	'@container (min-width: ' + RULES_TABLE_MIN + 'px) {' +
 	wideCss('.pg-rules') +
 	'  .pg-rules .td.pg-ract { white-space:normal; }' +
@@ -167,6 +175,28 @@ function formatBytes(n) {
 	return n.toFixed(0) + ' B';
 }
 
+/* IPv4 before IPv6; IPv4 numerically octet by octet, IPv6 as plain text */
+function cmpIp(a, b) {
+	const v6a = a.indexOf(':') > -1, v6b = b.indexOf(':') > -1;
+
+	if (v6a !== v6b)
+		return v6a ? 1 : -1;
+
+	if (v6a)
+		return (a < b) ? -1 : (a > b) ? 1 : 0;
+
+	const pa = a.split('.'), pb = b.split('.');
+
+	for (let i = 0; i < 4; i++) {
+		const d = (+pa[i] || 0) - (+pb[i] || 0);
+
+		if (d)
+			return d;
+	}
+
+	return 0;
+}
+
 function textEl(tag, cls, text) {
 	const n = E(tag, cls ? { 'class': cls } : {});
 	n.textContent = text;
@@ -215,6 +245,10 @@ function actionBadge(raw) {
 return view.extend({
 	lastBytes: {},
 	lastClient: {},
+	lastRate: {},          /* ip -> current up + down speed, for sorting */
+	sort: { key: 'host', dir: 1 },   /* always one active column, like the file manager: dir 1 = ascending */
+	shownOrder: null,
+	curClients: [],
 
 	load() {
 		return callStatus();
@@ -252,7 +286,7 @@ return view.extend({
 		]);
 
 		this.clientsTable = E('table', { 'class': 'table cbi-section-table pg-tbl pg-clients' }, [
-			headerRow(this.clientTitles()),
+			this.clientHeader(),
 			emptyRow(5, _('Fetching client list...'))
 		]);
 
@@ -358,20 +392,130 @@ return view.extend({
 		});
 	},
 
-	clientTitles() {
-		return [ _('Hostname'), _('IP Address / MAC'), _('Traffic / Speed'), _('Type'), _('Tag') ];
+	/* header row with clickable column titles: click = sort by it, click again = reverse */
+	clientHeader() {
+		const target = (key, label, cls, tag) => E(tag, {
+			'class': cls + ' pg-sort', 'role': 'button', 'tabindex': '0', 'data-sort': key,
+			'title': _('Click to sort'),
+			'click': () => this.setSort(key),
+			'keydown': ev => {
+				if (ev.key === 'Enter' || ev.key === ' ') {
+					ev.preventDefault();
+					this.setSort(key);
+				}
+			}
+		}, [ label, E('span', { 'class': 'pg-sortind' }) ]);
+
+		const th = (key, label) => target(key, label, 'th cbi-section-table-th', 'th');
+
+		const split = (k1, l1, k2, l2) => E('th', { 'class': 'th cbi-section-table-th pg-split' }, [
+			target(k1, l1, 'pg-sort-half', 'span'), '/', target(k2, l2, 'pg-sort-half', 'span')
+		]);
+
+		const tr = E('tr', { 'class': 'tr cbi-section-table-titles' }, [
+			th('host', _('Hostname')),
+			/* two sort keys share these cells: each half is its own click target */
+			split('addr', _('IP Address'), 'mac', _('MAC')),
+			split('traf', _('Traffic'), 'speed', _('Speed')),
+			th('type', _('Type')),
+			th('tag', _('Tag'))
+		]);
+
+		this.paintHeader(tr);
+
+		return tr;
+	},
+
+	setSort(key) {
+		if (this.sort.key === key)
+			this.sort = { key: key, dir: -this.sort.dir };
+		else	/* traffic and speed are most useful biggest first, the text columns A-Z */
+			this.sort = { key: key, dir: (key === 'traf' || key === 'speed') ? -1 : 1 };
+
+		this.paintHeader(this.clientsTable);
+		this.applySort();
+	},
+
+	paintHeader(root) {
+		const s = this.sort;
+
+		root.querySelectorAll('.pg-sort').forEach(el => {
+			const on = (s.key === el.getAttribute('data-sort'));
+
+			el.querySelector('.pg-sortind').textContent = on ? ((s.dir > 0) ? '\u25B2' : '\u25BC') : '';
+		});
+	},
+
+	/* puts the existing rows into the wanted order (no rebuild; nothing happens when the order is unchanged) */
+	applySort() {
+		const list = this.curClients || [];
+		const s = this.sort;
+		const by = {};
+
+		list.forEach(c => { by[c.ip] = c; });
+
+		const macOf = c => (c.mac && c.mac !== '\u2014') ? c.mac : '';
+		const byName = (a, b) => String(by[a].hostname || '').localeCompare(String(by[b].hostname || ''), undefined, { numeric: true, sensitivity: 'base' });
+
+		const cmp = (a, b) => {
+			const x = by[a], y = by[b];
+
+			switch (s.key) {
+			case 'addr':
+				return cmpIp(a, b);
+			case 'mac':
+				/* clients without a known MAC (shown as a dash) rank lowest */
+				return macOf(x).localeCompare(macOf(y));
+			case 'traf':
+				return ((x.up || 0) + (x.down || 0)) - ((y.up || 0) + (y.down || 0));
+			case 'speed':
+				return (this.lastRate[a] || 0) - (this.lastRate[b] || 0);
+			case 'type':
+				return (a.indexOf(':') > -1 ? 1 : 0) - (b.indexOf(':') > -1 ? 1 : 0);
+			case 'tag':
+				return (x.is_server ? 1 : 0) - (y.is_server ? 1 : 0);
+			}
+
+			return byName(a, b);
+		};
+
+		/* equal values fall back to hostname, then address, so rows do not shuffle between polls */
+		const order = list.map(c => c.ip).sort((a, b) => {
+			const r = cmp(a, b);
+
+			return r ? r * s.dir : (byName(a, b) || cmpIp(a, b));
+		});
+
+		const sig = order.join('|');
+
+		if (sig === this.shownOrder)
+			return;
+
+		this.shownOrder = sig;
+
+		this.keepScroll(() => order.forEach((ip, i) => {
+			const ref = this.clientRefs[ip];
+
+			if (!ref || !ref.row)
+				return;
+
+			ref.row.className = 'tr cbi-section-table-row cbi-rowstyle-' + (1 + i % 2);
+			this.clientsTable.appendChild(ref.row);
+		}));
 	},
 
 	/* The rows are only rebuilt when a client appears, disappears or changes its name / address / tag;
 	 * the traffic numbers are written into the existing cells on every poll. */
 	updateClients(clients, dt) {
+		this.curClients = clients;
+
 		const key = JSON.stringify(clients.map(c => [ c.ip, c.mac, c.hostname, c.is_server ]));
 
 		if (key !== this.clientKey) {
 			this.clientKey = key;
 			this.clientRefs = {};
 
-			const crows = [ headerRow(this.clientTitles()) ];
+			const crows = [ this.clientHeader() ];
 
 			if (!clients.length)
 				crows.push(emptyRow(5, _('No redirection clients found in NFT sets.')));
@@ -403,7 +547,7 @@ return view.extend({
 					E('div', { 'class': 'pg-trafbox' }, [ ref.tu.o, ref.su.o, ref.td.o, ref.sd.o ])
 				]);
 
-				crows.push(E('tr', { 'class': 'tr cbi-section-table-row cbi-rowstyle-' + (1 + i % 2) }, [
+				ref.row = E('tr', { 'class': 'tr cbi-section-table-row cbi-rowstyle-' + (1 + i % 2) }, [
 					cell(c.hostname ? textEl('span', '', c.hostname) : E('em', {}, [ 'unknown' ]), 'pg-host'),
 					E('td', { 'class': 'td pg-addr' }, [
 						textEl('div', 'pg-ip' + (isV6 ? ' pg-ip6' : ''), c.ip),
@@ -412,10 +556,13 @@ return view.extend({
 					traf,
 					cell(textEl('span', '', isV6 ? 'IPv6' : 'IPv4'), 'pg-type'),
 					tag
-				]));
+				]);
+
+				crows.push(ref.row);
 			});
 
 			this.keepScroll(() => L.dom.content(this.clientsTable, crows));
+			this.shownOrder = null;
 		}
 
 		clients.forEach(c => {
@@ -430,6 +577,7 @@ return view.extend({
 			if (up == null || down == null) {
 				ref.tu.v.textContent = ref.td.v.textContent = ref.su.v.textContent = ref.sd.v.textContent = '\u2014';
 				delete this.lastClient[c.ip];
+				this.lastRate[c.ip] = 0;
 				return;
 			}
 
@@ -438,13 +586,18 @@ return view.extend({
 			/* a counter that went down was reset (service restarted): count that interval as zero */
 			const rate = (cur, old) => (old !== undefined && cur >= old && dt > 0) ? (cur - old) / dt : 0;
 
+			const ru = rate(up, prev && prev.up), rd = rate(down, prev && prev.down);
+
 			ref.tu.v.textContent = formatBytes(up);
 			ref.td.v.textContent = formatBytes(down);
-			ref.su.v.textContent = formatBytes(rate(up, prev && prev.up)) + '/s';
-			ref.sd.v.textContent = formatBytes(rate(down, prev && prev.down)) + '/s';
+			ref.su.v.textContent = formatBytes(ru) + '/s';
+			ref.sd.v.textContent = formatBytes(rd) + '/s';
 
+			this.lastRate[c.ip] = ru + rd;
 			this.lastClient[c.ip] = { up: up, down: down };
 		});
+
+		this.applySort();
 	},
 
 	/* same badge switch as the main one; toggles in place without reloading the page */
