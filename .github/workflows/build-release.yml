@@ -1,4 +1,4 @@
-name: Build luci-app-pw2-guard Package
+name: Build luci-app-bypass Package
 permissions:
   contents: write
 
