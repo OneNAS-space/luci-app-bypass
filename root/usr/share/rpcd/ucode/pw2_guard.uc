@@ -94,8 +94,8 @@ function friendly_action(key) {
 	if (index(key, 'Direct') >= 0) {
 		if (index(key, 'BT') >= 0 || index(key, 'qB') >= 0)
 			return 'Direct / BitTorrent';
-		if (index(key, 'CF-Tunnel') >= 0)
-			return 'Direct / Cloudflare Tunnel';
+		if (index(key, 'P2P-Tunnel-Setup') >= 0)
+			return 'Direct / P2P Tunnel Setup (port 7844)';
 		if (index(key, 'CN-Direct') >= 0)
 			return 'Direct / China IP Address';
 		if (index(key, 'STUN-Direct') >= 0)
@@ -122,7 +122,14 @@ function friendly_action(key) {
 	return '—';
 }
 
-function collect_rules(chains) {
+/* the qBittorrent rules are only shown while the Natmap qB-port integration is installed AND switched on */
+function natmap_active() {
+	const ctx = cursor();
+
+	return access('/etc/config/natmap') && ctx.get(CONF, SECTION, 'enable_natmap') == '1';
+}
+
+function collect_rules(chains, show_qb) {
 	const rules = [];
 	const agg = {};
 	const order = [];
@@ -136,6 +143,9 @@ function collect_rules(chains) {
 				continue;
 
 			const key = normalize_key(k[1]);
+
+			if (!show_qb && substr(key, 0, 2) == 'qB')
+				continue;
 
 			if (!agg[key]) {
 				agg[key] = { name: key, packets: 0, bytes: 0, comment: friendly_action(key) };
@@ -154,7 +164,7 @@ function collect_rules(chains) {
 	const nat = {};
 	const nat_order = [];
 
-	for (let line in (chains['qb_fix'] ?? [])) {
+	for (let line in (show_qb ? (chains['qb_fix'] ?? []) : [])) {
 		const f = match(line, /ipv[0-9]/);
 		const d = match(line, /([a-z]+) dport ([0-9]+)/);
 		const c = match(line, /counter packets ([0-9]+) bytes ([0-9]+)/);
@@ -377,7 +387,7 @@ const methods = {
 				return { rules: [], clients: [] };
 
 			return {
-				rules: collect_rules(parse_chains(text)),
+				rules: collect_rules(parse_chains(text), natmap_active()),
 				clients: collect_clients()
 			};
 		}
