@@ -5,22 +5,22 @@
 'require ui';
 
 /*
- * PW2 Guard
+ * Bypass
  *
- * Status page for /etc/init.d/bypass_guard: start / stop the service, toggle
+ * Status page for /etc/init.d/bypass: start / stop the service, toggle
  * the Natmap qB-port integration and show live traffic counters and the VPN
  * client list taken from the nft table "inet bypass_logic".
- * Backend: /usr/share/rpcd/ucode/pw2_guard.uc (ubus object luci.pw2_guard).
+ * Backend: /usr/share/rpcd/ucode/bypass.uc (ubus object luci.bypass).
  *
  * NOTE: LuCI's E() treats a single non-array string child as HTML, so text
  * that comes from the router (host names, rule names) is always passed in an
  * array or assigned via textContent.
  */
 
-const callStatus = rpc.declare({ object: 'luci.pw2_guard', method: 'status' });
-const callData = rpc.declare({ object: 'luci.pw2_guard', method: 'data' });
-const callSetBypass = rpc.declare({ object: 'luci.pw2_guard', method: 'set_bypass', params: [ 'set' ] });
-const callSetNatmap = rpc.declare({ object: 'luci.pw2_guard', method: 'set_natmap', params: [ 'set' ] });
+const callStatus = rpc.declare({ object: 'luci.bypass', method: 'status' });
+const callData = rpc.declare({ object: 'luci.bypass', method: 'data' });
+const callSetBypass = rpc.declare({ object: 'luci.bypass', method: 'set_bypass', params: [ 'set' ] });
+const callSetNatmap = rpc.declare({ object: 'luci.bypass', method: 'set_natmap', params: [ 'set' ] });
 
 /* seconds between two refreshes. One refresh takes about 0.13 s on the slowest supported box (WHW03v2);
  * at 1 s that is roughly 13% of one core while the page is open, nothing when it is closed or in a background tab. */
@@ -85,6 +85,8 @@ const CSS =
 	'.pg-clients .pg-sortind { display:inline-block; margin-left:.35em; font-size:.7em; opacity:.7; vertical-align:middle; }' +
 	'.pg-clients .pg-sortind:empty { display:none; }' +
 	/* Traffic / Speed: two sort keys in one cell; the halves bring the padding so each is a big click target */
+	/* the header row sits right under the tab bar of the card: square, not a rounded strip */
+	'.pg-tbl, .pg-tbl .tr.cbi-section-table-titles, .pg-tbl .tr:first-child, .pg-tbl .tr:first-child > .th, .pg-tbl .th { border-top-left-radius:0 !important; border-top-right-radius:0 !important; }' +
 	'.pg-clients .th.pg-split { padding:0 !important; }' +
 	'.pg-clients .pg-sort-half { display:inline-block; padding:.6rem .5rem; }' +
 	'.pg-rules .tr.pg-total .td { font-weight:bold; }' +
@@ -153,7 +155,7 @@ const CSS =
 	'  .pg-rules .td.pg-ract { justify-self:start; text-align:left; }' +
 	'  .pg-rules .tr.cbi-section-table-row .td.pg-rby { white-space:normal; }' +
 	'}' +
-	'.pg-head { display:flex; align-items:center; flex-wrap:wrap; gap:.5rem 1.5rem; }' +
+	'.pg-head { display:flex; align-items:center; flex-wrap:wrap; gap:.5rem 1.5rem; padding:var(--field-gap) var(--section-inset) var(--field-gap) calc(var(--section-inset) + .8rem); border-radius:var(--radius-card); background:var(--surface-raised); box-shadow:0 4px 8px rgba(0,0,0,.03); }' +
 	'.pg-natmap { display:inline-flex; align-items:center; gap:.75rem; }' +
 	'.pg-switch { display:inline-flex; align-items:center; gap:.4rem; height:auto; min-height:0; line-height:1.4; padding:.25rem .8rem; margin:0; border-radius:999px; font-weight:600; font-size:.9rem; border:0; box-shadow:none; cursor:pointer; transition:filter .15s; }' +
 	'.pg-switch:hover { filter:brightness(.95); }' +
@@ -268,8 +270,10 @@ return view.extend({
 		st = st || {};
 
 		const head = E('div', { 'class': 'cbi-map-descr pg-head' }, [
-			textEl('span', '', _('Main Switch')),
-			this.buildSwitch(!!st.running)
+			E('span', { 'class': 'pg-natmap' }, [
+				textEl('span', '', _('Main Switch')),
+				this.buildSwitch(!!st.running)
+			])
 		]);
 
 		/* the Natmap switch always sits on the same row as the main switch;
@@ -278,7 +282,6 @@ return view.extend({
 
 		const root = E('div', {}, [
 			E('style', {}, [ CSS ]),
-			E('h2', {}, [ _('PW2 Guard') ]),
 			head
 		]);
 
@@ -300,9 +303,9 @@ return view.extend({
 			emptyRow(5, _('Fetching client list...'))
 		]);
 
-		/* two tab pages: the traffic statistics and the VPN client list */
-		/* initTabGroup() inserts the tab menu before the pane container, so the container needs a parent */
-		const group = E('div', {}, [
+		/* two tab pages: the traffic statistics and the VPN client list, laid out like the tabs of a CBI section
+		 * (the PassWall2 pages): one card with the tab bar on top and the pane below it */
+		const node = E('div', { 'class': 'cbi-section-node cbi-section-node-tabbed' }, [
 			E('div', { 'data-tab': 'stats', 'data-tab-title': _('Traffic Statistics') }, [
 				E('div', { 'class': 'pg-wrap' }, [ this.rulesTable ])
 			]),
@@ -311,9 +314,11 @@ return view.extend({
 			])
 		]);
 
-		const tabs = E('div', {}, [ group ]);
+		const tabs = E('div', { 'class': 'cbi-section' }, [ node ]);
 
-		ui.tabs.initTabGroup(group.childNodes);
+		/* initTabGroup() inserts the tab menu right in front of the pane container, inside the card: the tab switching
+		 * of LuCI relies on the menu being the previous sibling of the container */
+		ui.tabs.initTabGroup(node.childNodes);
 		root.appendChild(tabs);
 
 		this.refresh();
@@ -351,7 +356,7 @@ return view.extend({
 	},
 
 	updateRules(rules, dt) {
-		/* a last row adds up every Direct rule: what bypass_guard's rules let past PassWall2 in total */
+		/* a last row adds up every Direct rule: what bypass's rules let past PassWall2 in total */
 		const direct = rules.filter(r => /^Direct/.test(r.comment || ''));
 
 		if (direct.length > 1) {
