@@ -1,16 +1,5 @@
+/* rpcd plugin for luci-app-bypass (object luci.bypass): status, data, set_bypass, set_natmap */
 'use strict';
-
-/*
- * rpcd plugin for luci-app-bypass (object: luci.bypass)
- *
- *   status      -> { enabled, running, natmap, has_natmap }
- *   data        -> { rules: [...], clients: [...] }   (parsed from the nft table; clients carry up / down byte counters)
- *   set_bypass  -> { set: 'enable' | 'disable' }
- *   set_natmap  -> { set: '1' | '0' }
- *
- * Only these methods are exposed to the web UI (see acl.d), no generic
- * command execution is needed.
- */
 
 import { cursor } from 'uci';
 import { popen, access, writefile } from 'fs';
@@ -19,8 +8,6 @@ const CONF = 'bypass';
 const SECTION = 'global';
 const INIT = '/etc/init.d/bypass';
 const NFT = '/usr/sbin/nft';
-
-/* ---------- helpers ---------- */
 
 function run(cmd) {
 	const p = popen(cmd + ' 2>/dev/null', 'r');
@@ -51,9 +38,6 @@ function save_config(ctx, name) {
 	ctx.commit(name);
 }
 
-/* ---------- nft parsing ---------- */
-
-/* split "nft list table" output into { chain_name: [ trimmed rule lines ] } */
 function parse_chains(text) {
 	const chains = {};
 	let cur = null;
@@ -121,7 +105,29 @@ function friendly_action(key) {
 	return '—';
 }
 
-/* the qBittorrent rules are only shown while the Natmap qB-port integration is installed AND switched on */
+function natmap_instances() {
+	const out = trim(run("ubus call service list '{\"name\":\"natmap\"}'"));
+
+	if (!out)
+		return false;
+
+	let svc;
+
+	try {
+		svc = json(out);
+	} catch (e) {
+		return false;
+	}
+
+	const inst = svc?.natmap?.instances;
+
+	for (let k in inst)
+		if (inst[k]?.running)
+			return true;
+
+	return false;
+}
+
 function natmap_active() {
 	const ctx = cursor();
 
@@ -159,7 +165,6 @@ function collect_rules(chains, show_qb) {
 	for (let key in order)
 		push(rules, agg[key]);
 
-	/* qBittorrent dual-stack port forwards */
 	const nat = {};
 	const nat_order = [];
 
@@ -200,9 +205,6 @@ function collect_rules(chains, show_qb) {
 	return rules;
 }
 
-/* ---------- clients ---------- */
-
-/* DHCP host entries tagged VPN: [ { name, macs: [ 'aa:bb:..' ], server } ]. The tags and MACs are what bypass uses too. */
 function load_hosts() {
 	const ctx = cursor();
 	const list = [];
@@ -243,7 +245,6 @@ function load_neighbours() {
 	return map;
 }
 
-/* all sets of the table in ONE nft call (forking is the expensive part on small ARM routers): { name: [ elem, ... ] } */
 let SETS = {};
 
 function load_sets() {
@@ -267,7 +268,6 @@ function load_sets() {
 	}
 }
 
-/* plain member addresses of a set */
 function fetch_set(name) {
 	const out = [];
 
@@ -283,7 +283,6 @@ function fetch_set(name) {
 	return out;
 }
 
-/* per-element byte counters of an accounting set: { "<ip>": bytes } (empty when the set does not exist) */
 function fetch_acct(name) {
 	const out = {};
 
@@ -300,10 +299,6 @@ function fetch_acct(name) {
 	return out;
 }
 
-/*
- * One row per address a VPN client is currently seen with (bypass learns them from the client's MAC; they expire
- * after an hour without traffic), plus one "offline" row for every configured VPN MAC that has no address right now.
- */
 function collect_clients() {
 	load_sets();
 
@@ -342,16 +337,11 @@ function collect_clients() {
 			mac: (mac != '') ? uc(mac) : '\u2014',
 			hostname: h ? h.name : '',
 			is_server: h ? h.server : false,
-			up: up[ip] ?? 0,        /* bytes sent by the client / received by it through the proxy */
+			up: up[ip] ?? 0,
 			down: down[ip] ?? 0
 		});
 	}
 
-	/*
-	 * What an offline device last moved: the accounting counters outlive the learned address by up to a week, so the
-	 * counters of every address that is no longer listed are added up per MAC (the MAC of an address comes from the
-	 * neighbour table, best effort). The page shows these totals, never a speed.
-	 */
 	const past = {};
 
 	for (let ip in keys({ ...up, ...down })) {
@@ -392,8 +382,6 @@ function collect_clients() {
 	return clients;
 }
 
-/* ---------- methods ---------- */
-
 const methods = {
 	status: {
 		call: function() {
@@ -405,7 +393,9 @@ const methods = {
 				enabled: enabled,
 				running: enabled && table_up,
 				natmap: (ctx.get(CONF, SECTION, 'enable_natmap') == '1'),
-				has_natmap: access('/etc/config/natmap') ? true : false
+				has_natmap: access('/etc/config/natmap') ? true : false,
+				watching: (system('pgrep -f "[n]atmap_watch.sh" >/dev/null 2>&1') == 0),
+				instances: natmap_instances()
 			};
 		}
 	},
@@ -472,3 +462,4 @@ const methods = {
 };
 
 return { 'luci.bypass': methods };
+
