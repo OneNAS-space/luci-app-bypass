@@ -1,6 +1,4 @@
 #!/bin/sh
-# Follows the Natmap status files of the qBittorrent entries (started by /etc/init.d/bypass) and keeps the
-# qB direct rules in line with them. Natmap's own configuration is only read, never changed.
 # usage: natmap_watch.sh [--once] <natmap section id>...
 
 TABLE="bypass_logic"
@@ -44,7 +42,6 @@ apply() {
         n=$((n + 1))
         inner_list="$inner_list${inner_list:+, }$inner"
 
-        # a UDP mapping also carries the TCP side of BitTorrent: forward TCP of the same public port to the client
         if [ "$proto" = "udp" ]; then
             outer_list="$outer_list${outer_list:+, }$port"
             target=$(uci -q get natmap."$sid".forward_target)
@@ -56,7 +53,6 @@ add rule inet $TABLE qb_fix iifname __WAN__ meta nfproto ipv6 tcp dport $port co
         fi
     done
 
-    # no status yet (Natmap is restarting): keep what is in place
     [ "$n" -gt 0 ] || return 0
 
     sig="$inner_list|$outer_list|$rules"
@@ -84,7 +80,6 @@ if [ "$ONCE" = 1 ]; then
     exit 0
 fi
 
-# Forkless polling: the status files are read with the shell's own "read"; only a change runs apply().
 last=""
 while :; do
     cur=""
