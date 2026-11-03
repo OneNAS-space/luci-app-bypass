@@ -1,39 +1,21 @@
+/* Bypass status page. Backend: bypass.uc (ubus luci.bypass).
+ * LuCI's E() takes a lone string child as HTML: router-provided text goes in an array or textContent. */
 'use strict';
 'require view';
 'require rpc';
 'require poll';
 'require ui';
 
-/*
- * Bypass
- *
- * Status page for /etc/init.d/bypass: start / stop the service, toggle
- * the Natmap qB-port integration and show live traffic counters and the VPN
- * client list taken from the nft table "inet bypass_logic".
- * Backend: /usr/share/rpcd/ucode/bypass.uc (ubus object luci.bypass).
- *
- * NOTE: LuCI's E() treats a single non-array string child as HTML, so text
- * that comes from the router (host names, rule names) is always passed in an
- * array or assigned via textContent.
- */
-
 const callStatus = rpc.declare({ object: 'luci.bypass', method: 'status' });
 const callData = rpc.declare({ object: 'luci.bypass', method: 'data' });
 const callSetBypass = rpc.declare({ object: 'luci.bypass', method: 'set_bypass', params: [ 'set' ] });
 const callSetNatmap = rpc.declare({ object: 'luci.bypass', method: 'set_natmap', params: [ 'set' ] });
 
-/* seconds between two refreshes. One refresh takes about 0.13 s on the slowest supported box (WHW03v2);
- * at 1 s that is roughly 13% of one core while the page is open, nothing when it is closed or in a background tab. */
 const POLL_INTERVAL = 1;
 
-/* The two tables switch from a real table to cards at different widths: the clients table has more to show
- * per row (address + MAC, traffic + speed), so it needs more room. */
 const RULES_TABLE_MIN = 661;
 const CLIENTS_TABLE_MIN = 661;
 
-/* real table, whatever the theme does at this width (it switches to stacked cells at its own breakpoint,
- * which is why the middle widths used to fall apart). Short columns stay on one line, the last column
- * takes what is left and wraps when it has to. */
 function wideCss(sel) {
 	return sel + ' { display:table !important; width:100% !important; }' +
 		sel + ' .tr { display:table-row !important; }' +
@@ -42,8 +24,6 @@ function wideCss(sel) {
 		sel + ' .td::before, ' + sel + ' .td::after { content:none !important; }';
 }
 
-/* narrow: the theme stacks the cells in its own way (labels as absolutely positioned pseudo elements,
- * flex items, ...). Reset all of that; the grid areas of each table are laid out explicitly. */
 function narrowCss(sel) {
 	return sel + ' .tr.cbi-section-table-titles { display:none !important; }' +
 		sel + ' .tr.cbi-section-table-row { display:grid !important; align-items:baseline; gap:.2rem 1rem; padding:.6rem 1rem !important; margin:0 !important; height:auto !important; min-height:0 !important; flex:none !important; border-top:1px solid rgba(128,128,128,.15); }' +
@@ -54,7 +34,6 @@ function narrowCss(sel) {
 const CSS =
 	'.pg-label { display:inline-block; padding:2px 6px; border-radius:3px; color:#fff; font-weight:bold; font-size:0.85em; }' +
 	'.pg-speed { color:#0069d6; font-size:0.8em; font-weight:bold; margin-left:4px; }' +
-	/* the counters change every few seconds: equal-width digits and fixed minimum widths keep the columns still */
 	'.pg-tbl { font-variant-numeric:tabular-nums; }' +
 	'.pg-pk, .pg-by, .pg-speed { display:inline-block; text-align:inherit; vertical-align:baseline; white-space:nowrap; }' +
 	'.pg-pk { min-width:8ch; }' +
@@ -66,7 +45,6 @@ const CSS =
 	'.pg-wrap { container-type:inline-size; }' +
 	'.pg-tbl .td.pg-tag .pg-label { margin:0 4px 2px 0; }' +
 	'.pg-speed { white-space:nowrap; }' +
-	/* clients: IP over MAC, traffic over speed (two lines each) */
 	'.pg-clients .pg-ip, .pg-clients .pg-mac { display:block; }' +
 	'.pg-clients .pg-mac { font-size:.85em; opacity:.8; }' +
 	'.pg-clients .pg-offline { color:#d9534f; font-weight:bold; }' +
@@ -74,18 +52,13 @@ const CSS =
 	'.pg-clients .pg-arr { font-size:.7em; margin-right:.3em; vertical-align:.08em; }' +
 	'.pg-clients .pg-cn { min-width:10.5ch; }' +
 	'.pg-clients .pg-cs { min-width:12ch; font-size:.85em; font-weight:bold; }' +
-	/* same colours as the Inbound / Outbound labels of the realtime bandwidth graph: download blue, upload green */
 	'.pg-clients .pg-cs-dn { color:blue; }' +
 	'.pg-clients .pg-cs-up { color:green; }' +
-	/* traffic column: as narrow as its content, the block centred under its header, its cells centred too */
 	'.pg-clients .pg-trafbox { display:inline-grid; grid-template-columns:auto auto; align-items:baseline; column-gap:.7em; row-gap:.05rem; text-align:center; }' +
-	/* sortable column headers, same look as the file manager: the whole header cell is the target */
 	'.pg-clients .pg-sort { cursor:pointer; user-select:none; }' +
 	'.pg-clients .pg-sort:hover, .pg-clients .pg-sort:focus-visible { background:rgba(128,128,128,.12); outline:none; }' +
 	'.pg-clients .pg-sortind { display:inline-block; margin-left:.35em; font-size:.7em; opacity:.7; vertical-align:middle; }' +
 	'.pg-clients .pg-sortind:empty { display:none; }' +
-	/* Traffic / Speed: two sort keys in one cell; the halves bring the padding so each is a big click target */
-	/* the header row sits right under the tab bar of the card: square, not a rounded strip */
 	'.pg-tbl, .pg-tbl .tr.cbi-section-table-titles, .pg-tbl .tr:first-child, .pg-tbl .tr:first-child > .th, .pg-tbl .th { border-top-left-radius:0 !important; border-top-right-radius:0 !important; }' +
 	'.pg-clients .th.pg-split { padding:0 !important; }' +
 	'.pg-clients .pg-sort-half { display:inline-block; padding:.6rem .5rem; }' +
@@ -100,7 +73,6 @@ const CSS =
 	'  .pg-clients .td.pg-host { overflow-wrap:anywhere; }' +
 	'  .pg-clients .td.pg-type, .pg-clients .td.pg-traf { width:1%; }' +
 	'}' +
-	/* rules, narrow: rule name (bold) + action on line 1, "Packets: n   Bytes: n" on line 2 */
 	'@container (max-width: ' + (RULES_TABLE_MIN - 1) + 'px) {' +
 	narrowCss('.pg-rules') +
 	'  .pg-rules .td.pg-rpk::before, .pg-rules .td.pg-rby::before { content:attr(data-title) ":" !important; display:inline !important; position:static !important; float:none !important; width:auto !important; margin:0 .4em 0 0 !important; padding:0 !important; font-weight:600; opacity:.7; }' +
@@ -112,7 +84,6 @@ const CSS =
 	'  .pg-rules .td.pg-rpk, .pg-rules .td.pg-rby { font-size:.85em; opacity:.8; }' +
 	'  .pg-rules .td.pg-ract .pg-label { font-size:.8em; white-space:normal; display:inline-block; }' +
 	'}' +
-	/* clients, narrow card: hostname (bold) + tags on line 1, then IP, MAC, and traffic with speed */
 	'@container (max-width: ' + (CLIENTS_TABLE_MIN - 1) + 'px) {' +
 	narrowCss('.pg-clients') +
 	'  .pg-clients .tr.cbi-section-table-row { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"host tag" "ip ip" "mac mac" "traf traf"; }' +
@@ -125,16 +96,12 @@ const CSS =
 	'  .pg-clients .td.pg-traf { grid-area:traf; font-size:.9em; }' +
 	'  .pg-clients .pg-cn, .pg-clients .pg-cs { min-width:0; }' +
 	'}' +
-	/* clients, medium: still three zones - hostname on the left, IP over MAC in the middle, tags on the right; the
-	 * traffic and speed lines sit underneath (fixed tracks, so the middle zone starts at the same x on every row) */
 	'@container (min-width: 501px) and (max-width: ' + (CLIENTS_TABLE_MIN - 1) + 'px) {' +
 	'  .pg-clients .tr.cbi-section-table-row { grid-template-columns:minmax(0,1fr) minmax(0,1.2fr) 6.2rem; grid-template-areas:"host ip tag" "host mac tag" "traf traf tag"; align-items:center; column-gap:.75rem; }' +
 	'  .pg-clients .pg-ip, .pg-clients .pg-mac { text-align:center; }' +
 	'  .pg-clients .tr.cbi-section-table-row .td.pg-tag { align-self:center; justify-self:stretch; text-align:right !important; }' +
 	'  .pg-clients .td.pg-tag .pg-label { margin:1px 0 1px 4px; }' +
 	'}' +
-	/* rules, medium-narrow: three zones - rule name on the left, packets over bytes in the middle, action on
-	 * the right; below this the card (name + action, then packets and bytes) applies */
 	'@container (min-width: 501px) and (max-width: ' + (RULES_TABLE_MIN - 1) + 'px) {' +
 	'  .pg-rules .tr.cbi-section-table-row { grid-template-columns:minmax(0,1.25fr) auto minmax(0,.9fr); grid-template-areas:"name pk act" "name by act"; align-items:center; column-gap:1rem; }' +
 	'  .pg-rules .td.pg-rname, .pg-rules .td.pg-ract { align-self:center; }' +
@@ -149,7 +116,6 @@ const CSS =
 	'@container (max-width: 500px) {' +
 	'  .pg-pk, .pg-by, .pg-speed { min-width:0; }' +
 	'}' +
-	/* very narrow: the action label gets its own full-width line under the rule name, so it can wrap freely */
 	'@container (max-width: 420px) {' +
 	'  .pg-rules .tr.cbi-section-table-row { grid-template-columns:minmax(0,1fr) minmax(0,1fr); grid-template-areas:"name name" "act act" "pk by"; }' +
 	'  .pg-rules .td.pg-ract { justify-self:start; text-align:left; }' +
@@ -162,6 +128,7 @@ const CSS =
 	'.pg-switch:disabled { opacity:.6; cursor:default; }' +
 	'.pg-switch::before { content:""; width:.55rem; height:.55rem; border-radius:50%; background:currentColor; }' +
 	'.pg-switch.on { color:#1a7f37; background:#dafbe1; }' +
+	'.pg-switch.warn { color:#9a6700; background:#fff8c5; }' +
 	'.pg-switch.na { color:#6b7280; background:rgba(128,128,128,.18); }' +
 	'.pg-switch.na:disabled { opacity:1; cursor:not-allowed; }' +
 	'.pg-switch.off { color:#82071e; background:#ffebe9; }';
@@ -179,7 +146,6 @@ function formatBytes(n) {
 	return n.toFixed(0) + ' B';
 }
 
-/* IPv4 before IPv6; IPv4 numerically octet by octet, IPv6 as plain text */
 function cmpIp(a, b) {
 	const v6a = a.indexOf(':') > -1, v6b = b.indexOf(':') > -1;
 
@@ -201,7 +167,6 @@ function cmpIp(a, b) {
 	return 0;
 }
 
-/* clients: by address, a client without an address (offline) ranks lowest */
 function cmpAddr(x, y) {
 	if (!!x.offline !== !!y.offline)
 		return x.offline ? -1 : 1;
@@ -257,8 +222,8 @@ function actionBadge(raw) {
 return view.extend({
 	lastBytes: {},
 	lastClient: {},
-	lastRate: {},          /* ip -> current up + down speed, for sorting */
-	sort: { key: 'host', dir: 1 },   /* always one active column, like the file manager: dir 1 = ascending */
+	lastRate: {},
+	sort: { key: 'host', dir: 1 },
 	shownOrder: null,
 	curClients: [],
 
@@ -276,9 +241,7 @@ return view.extend({
 			])
 		]);
 
-		/* the Natmap switch always sits on the same row as the main switch;
-		 * it shows "Not Installed" (and can't be clicked) when natmap isn't on the system */
-		head.appendChild(this.buildNatmapOption(st.natmap, st.has_natmap));
+		head.appendChild(this.buildNatmapOption(st.natmap, st.has_natmap, st.watching, st.instances));
 
 		const root = E('div', {}, [
 			E('style', {}, [ CSS ]),
@@ -303,8 +266,6 @@ return view.extend({
 			emptyRow(5, _('Fetching client list...'))
 		]);
 
-		/* two tab pages: the traffic statistics and the VPN client list, laid out like the tabs of a CBI section
-		 * (the PassWall2 pages): one card with the tab bar on top and the pane below it */
 		const node = E('div', { 'class': 'cbi-section-node cbi-section-node-tabbed' }, [
 			E('div', { 'data-tab': 'stats', 'data-tab-title': _('Traffic Statistics') }, [
 				E('div', { 'class': 'pg-wrap' }, [ this.rulesTable ])
@@ -316,8 +277,6 @@ return view.extend({
 
 		const tabs = E('div', { 'class': 'cbi-section' }, [ node ]);
 
-		/* initTabGroup() inserts the tab menu right in front of the pane container, inside the card: the tab switching
-		 * of LuCI relies on the menu being the previous sibling of the container */
 		ui.tabs.initTabGroup(node.childNodes);
 		root.appendChild(tabs);
 
@@ -331,11 +290,7 @@ return view.extend({
 		return callData().then(data => this.update(data || {})).catch(() => null);
 	},
 
-	/* The tables are only rebuilt when their structure changes (a rule or client appears/disappears).
-	 * Otherwise the existing cells are updated in place, so the poll never replaces the DOM
-	 * (which used to collapse the page height for a moment and throw the scroll position back to the top). */
 	update(data) {
-		/* speeds are computed from the real time between two samples, not from the nominal interval */
 		const now = Date.now();
 		const dt = this.lastSample ? (now - this.lastSample) / 1000 : 0;
 
@@ -356,7 +311,6 @@ return view.extend({
 	},
 
 	updateRules(rules, dt) {
-		/* a last row adds up every Direct rule: what bypass's rules let past PassWall2 in total */
 		const direct = rules.filter(r => /^Direct/.test(r.comment || ''));
 
 		if (direct.length > 1) {
@@ -383,8 +337,8 @@ return view.extend({
 			rules.forEach((r, i) => {
 				const pk = textEl('span', 'pg-pk', '');
 				const by = textEl('span', 'pg-by', '');
-				const sp = textEl('span', 'pg-speed pg-sp-inline', '');   /* shown inside Bytes on the narrow layouts */
-				const sp2 = textEl('span', 'pg-speed', '');              /* shown in its own Speed column in the table */
+				const sp = textEl('span', 'pg-speed pg-sp-inline', '');
+				const sp2 = textEl('span', 'pg-speed', '');
 
 				this.ruleRefs[r.name] = { pk: pk, by: by, sp: sp, sp2: sp2 };
 
@@ -420,7 +374,6 @@ return view.extend({
 		});
 	},
 
-	/* header row with clickable column titles: click = sort by it, click again = reverse */
 	clientHeader() {
 		const target = (key, label, cls, tag) => E(tag, {
 			'class': cls + ' pg-sort', 'role': 'button', 'tabindex': '0', 'data-sort': key,
@@ -442,7 +395,6 @@ return view.extend({
 
 		const tr = E('tr', { 'class': 'tr cbi-section-table-titles' }, [
 			th('host', _('Hostname')),
-			/* two sort keys share these cells: each half is its own click target */
 			split('addr', _('IP Address'), 'mac', _('MAC')),
 			split('traf', _('Traffic'), 'speed', _('Speed')),
 			th('type', _('Type')),
@@ -457,7 +409,7 @@ return view.extend({
 	setSort(key) {
 		if (this.sort.key === key)
 			this.sort = { key: key, dir: -this.sort.dir };
-		else	/* traffic and speed are most useful biggest first, the text columns A-Z */
+		else
 			this.sort = { key: key, dir: (key === 'traf' || key === 'speed') ? -1 : 1 };
 
 		this.paintHeader(this.clientsTable);
@@ -474,7 +426,6 @@ return view.extend({
 		});
 	},
 
-	/* puts the existing rows into the wanted order (no rebuild; nothing happens when the order is unchanged) */
 	applySort() {
 		const list = this.curClients || [];
 		const s = this.sort;
@@ -485,7 +436,6 @@ return view.extend({
 		const macOf = c => (c.mac && c.mac !== '\u2014') ? c.mac : '';
 		const byName = (a, b) => String(by[a].hostname || '').localeCompare(String(by[b].hostname || ''), undefined, { numeric: true, sensitivity: 'base' });
 
-		/* offline clients have no address family: they rank lowest */
 		const rank = c => c.offline ? -1 : (c.ip.indexOf(':') > -1 ? 1 : 0);
 
 		const cmp = (a, b) => {
@@ -495,7 +445,6 @@ return view.extend({
 			case 'addr':
 				return cmpAddr(x, y);
 			case 'mac':
-				/* clients without a known MAC (shown as a dash) rank lowest */
 				return macOf(x).localeCompare(macOf(y));
 			case 'traf':
 				return ((x.up || 0) + (x.down || 0)) - ((y.up || 0) + (y.down || 0));
@@ -510,7 +459,6 @@ return view.extend({
 			return byName(a, b);
 		};
 
-		/* equal values fall back to hostname, then address, then id, so rows do not shuffle between polls */
 		const order = list.map(c => c.id).sort((a, b) => {
 			const r = cmp(a, b);
 
@@ -535,8 +483,6 @@ return view.extend({
 		}));
 	},
 
-	/* The rows are only rebuilt when a client appears, disappears or changes its name / address / tag;
-	 * the traffic numbers are written into the existing cells on every poll. */
 	updateClients(clients, dt) {
 		this.curClients = clients;
 
@@ -558,7 +504,6 @@ return view.extend({
 				if (c.is_server)
 					tag.appendChild(badge('Server', '#0069d6'));
 
-				/* a configured VPN device that has no address right now: red "Offline"; what it last moved, but no speed */
 				if (c.offline) {
 					const ref = { offline: true };
 					let traf = E('td', { 'class': 'td pg-traf' });
@@ -567,7 +512,6 @@ return view.extend({
 						const mk = arrow => {
 							const v = textEl('span', '', '');
 
-							/* the figures sit in the first column of the grid, one per line, under the same header as the others */
 							return { v: v, o: E('span', { 'class': 'pg-cn', 'style': 'grid-column:1' }, [ textEl('span', 'pg-arr', arrow), v ]) };
 						};
 
@@ -596,8 +540,6 @@ return view.extend({
 					return;
 				}
 
-				/* line 1: total sent / received, line 2: current speed */
-				/* the arrow is a separate, smaller glyph: the full-size one looks heavy next to the digits */
 				const mk = (cls, arrow) => {
 					const v = textEl('span', '', '');
 
@@ -612,7 +554,6 @@ return view.extend({
 				this.clientRefs[c.id] = ref;
 
 				const traf = E('td', { 'class': 'td pg-traf', 'title': _('Upload / Download') }, [
-					/* a 2 x 2 grid: one row per direction (upload, download), traffic then speed in the columns */
 					E('div', { 'class': 'pg-trafbox' }, [ ref.tu.o, ref.su.o, ref.td.o, ref.sd.o ])
 				]);
 
@@ -654,7 +595,6 @@ return view.extend({
 
 			const up = c.up, down = c.down;
 
-			/* no counters (service started before the accounting rules existed): show dashes */
 			if (up == null || down == null) {
 				ref.tu.v.textContent = ref.td.v.textContent = ref.su.v.textContent = ref.sd.v.textContent = '\u2014';
 				delete this.lastClient[c.id];
@@ -664,7 +604,6 @@ return view.extend({
 
 			const prev = this.lastClient[c.id];
 
-			/* a counter that went down was reset (service restarted): count that interval as zero */
 			const rate = (cur, old) => (old !== undefined && cur >= old && dt > 0) ? (cur - old) / dt : 0;
 
 			const ru = rate(up, prev && prev.up), rd = rate(down, prev && prev.down);
@@ -681,10 +620,11 @@ return view.extend({
 		this.applySort();
 	},
 
-	/* same badge switch as the main one; toggles in place without reloading the page */
-	buildNatmapOption(checked, installed) {
+	buildNatmapOption(checked, installed, running, inst) {
 		const tip = _('Update firewall rules automatically when Natmap port changes.');
 		let on = !!checked;
+		let watching = !!running;
+		let hasInst = !!inst;
 
 		const paint = () => {
 			if (!installed) {
@@ -695,9 +635,32 @@ return view.extend({
 				return;
 			}
 
-			sw.className = 'pg-switch ' + (on ? 'on' : 'off');
-			sw.textContent = on ? _('Enabled') : _('Disabled');
-			sw.title = on ? _('Click to disable') : _('Click to enable');
+			let state = _('Enabled'), hint = '';
+
+			let cls = on ? 'on' : 'off';
+
+			if (on) {
+				if (!watching) {
+					cls = 'warn';
+					state += ' · ' + _('No qB entry');
+					hint = _('No enabled Natmap entry is recognised as qBittorrent (its comment must start with "qB", or it uses the qBittorrent client script with refresh on), so the watcher is not running.');
+				}
+				else if (!hasInst) {
+					cls = 'warn';
+					state += ' · ' + _('No instances');
+					hint = _('The watcher is running, but Natmap has no running instance, so there are no ports to follow yet. It picks them up automatically once Natmap starts.');
+				}
+				else {
+					state += ' · ' + _('Watching');
+					hint = _('The watcher is running and keeps the qB direct rules in line with the current Natmap ports.');
+				}
+
+				hint += ' ';
+			}
+
+			sw.className = 'pg-switch ' + cls;
+			sw.textContent = on ? state : _('Disabled');
+			sw.title = on ? hint + _('Click to disable') : _('Click to enable');
 		};
 
 		const sw = E('button', {
@@ -716,6 +679,8 @@ return view.extend({
 						throw new Error('failed');
 
 					on = !on;
+
+					return callStatus().then(s => { watching = !!(s && s.watching); hasInst = !!(s && s.instances); });
 				}).catch(() => {
 					ui.addNotification(null, E('p', {}, [ _('Config Update Failed') ]), 'danger');
 				}).then(() => {
@@ -728,12 +693,11 @@ return view.extend({
 		paint();
 
 		return E('span', { 'class': 'pg-natmap', 'title': tip }, [
-			textEl('span', '', _('Natmap qB-port Direct')),
+			textEl('span', '', _('Natmap qB Direct')),
 			sw
 		]);
 	},
 
-	/* status badge that doubles as the on/off switch */
 	buildSwitch(running) {
 		const label = running ? _('Enabled') : _('Disabled');
 
