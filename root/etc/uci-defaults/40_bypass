@@ -12,6 +12,19 @@ commit bypass
 EOT
 fi
 
+# Earlier versions attached a helper script to the qBittorrent entry of Natmap (custom_script). Natmap is only
+# read now, so take that script out again (only entries that still point at one of its old paths).
+if [ -e /etc/config/natmap ]; then
+	changed=0
+	for sec in $(uci -q show natmap | sed -En "s#^natmap\.([^.=]+)\.custom_script='/usr/share/bypass(_guard)?/scripts/natmap_bypass\.sh'\$#\1#p"); do
+		uci -q delete "natmap.$sec.custom_script" && changed=1
+	done
+	if [ "$changed" = "1" ]; then
+		uci -q commit natmap
+		/etc/init.d/natmap reload >/dev/null 2>&1
+	fi
+fi
+
 rm -f /tmp/luci-indexcache*
 rm -rf /tmp/luci-modulecache/*
 exit 0
