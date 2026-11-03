@@ -155,6 +155,22 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: 🧹 Keep only the latest 7 releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEEP: 7
+        run: |
+          set -e
+          # newest first; everything after the first $KEEP releases is deleted together with its tag
+          gh release list --repo "${{ github.repository }}" --limit 1000 \
+            --json tagName,createdAt \
+            --jq 'sort_by(.createdAt) | reverse | .[env.KEEP|tonumber:] | .[].tagName' |
+          while read -r tag; do
+            [ -n "$tag" ] || continue
+            echo "Deleting old release $tag"
+            gh release delete "$tag" --repo "${{ github.repository }}" --cleanup-tag --yes
+          done
+
       - name: 🔑 Checkout custom-packages repo
         uses: actions/checkout@v7
         with:
