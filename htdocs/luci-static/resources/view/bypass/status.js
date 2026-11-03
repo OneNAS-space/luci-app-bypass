@@ -31,9 +31,24 @@ function narrowCss(sel) {
 		sel + ' .td::after, ' + sel + ' .td::before { content:none !important; }';
 }
 
+const LIGHT_VARS =
+	'--pg-t0:#d9534f; --pg-t1:#e8820c; --pg-t2:#b8860b; --pg-t3:#3d9a4a; --pg-t4:#139aa8; --pg-t5:#0069d6; --pg-t6:#7e57c2;' +
+	'--pg-up:#1a7f37; --pg-dn:#0969da; --pg-offline:#d9534f;' +
+	'--pg-on-fg:#1a7f37; --pg-on-bg:#dafbe1; --pg-warn-fg:#9a6700; --pg-warn-bg:#fff8c5; --pg-off-fg:#82071e; --pg-off-bg:#ffebe9;';
+
+const DARK_VARS =
+	'--pg-t0:#b9444a; --pg-t1:#b8691a; --pg-t2:#8f6d0b; --pg-t3:#2f7d3f; --pg-t4:#11808c; --pg-t5:#2a5fb0; --pg-t6:#6a4aa8;' +
+	'--pg-up:#4ade80; --pg-dn:#6cb0ff; --pg-offline:#ff8a8a;' +
+	'--pg-on-fg:#7ee2a0; --pg-on-bg:rgba(46,160,67,.22); --pg-warn-fg:#e3b341; --pg-warn-bg:rgba(187,128,9,.22); --pg-off-fg:#ffa9ae; --pg-off-bg:rgba(248,81,73,.18);';
+
 const CSS =
+	':root { ' + LIGHT_VARS + ' }' +
+	':root[data-argon-mode="dark"], :root[data-darkmode="true"] { ' + DARK_VARS + ' }' +
+	'@media (prefers-color-scheme: dark) { :root:not([data-argon-mode="light"]):not([data-argon-mode="dark"]):not([data-darkmode="false"]):not([data-darkmode="true"]) { ' + DARK_VARS + ' } }' +
+	'.pg-t0 { background-color:var(--pg-t0); } .pg-t1 { background-color:var(--pg-t1); } .pg-t2 { background-color:var(--pg-t2); } .pg-t3 { background-color:var(--pg-t3); }' +
+	'.pg-t4 { background-color:var(--pg-t4); } .pg-t5 { background-color:var(--pg-t5); } .pg-t6 { background-color:var(--pg-t6); }' +
 	'.pg-label { display:inline-block; padding:2px 6px; border-radius:3px; color:#fff; font-weight:bold; font-size:0.85em; }' +
-	'.pg-speed { color:#0069d6; font-size:0.8em; font-weight:bold; margin-left:4px; }' +
+	'.pg-speed { color:var(--pg-dn); font-size:0.8em; font-weight:bold; margin-left:4px; }' +
 	'.pg-tbl { font-variant-numeric:tabular-nums; }' +
 	'.pg-pk, .pg-by, .pg-speed { display:inline-block; text-align:inherit; vertical-align:baseline; white-space:nowrap; }' +
 	'.pg-pk { min-width:8ch; }' +
@@ -47,14 +62,16 @@ const CSS =
 	'.pg-speed { white-space:nowrap; }' +
 	'.pg-clients .pg-ip, .pg-clients .pg-mac { display:block; }' +
 	'.pg-clients .pg-mac { font-size:.85em; opacity:.8; }' +
-	'.pg-clients .pg-offline { color:#d9534f; font-weight:bold; }' +
-	'.pg-clients .pg-cn, .pg-clients .pg-cs { display:inline-block; white-space:nowrap; text-align:center; }' +
+	'.pg-clients .pg-pair + .pg-pair { margin-top:.35rem; }' +
+	'.pg-clients .pg-offline { color:var(--pg-offline); font-weight:bold; }' +
+	'.pg-clients .pg-cn, .pg-clients .pg-cs { display:inline-flex; align-items:baseline; gap:.3em; white-space:nowrap; }' +
+	'.pg-clients .pg-cn, .pg-clients .pg-cs { justify-content:center; }' +
 	'.pg-clients .pg-arr { font-size:.7em; margin-right:.3em; vertical-align:.08em; }' +
-	'.pg-clients .pg-cn { min-width:10.5ch; }' +
-	'.pg-clients .pg-cs { min-width:12ch; font-size:.85em; font-weight:bold; }' +
-	'.pg-clients .pg-cs-dn { color:blue; }' +
-	'.pg-clients .pg-cs-up { color:green; }' +
-	'.pg-clients .pg-trafbox { display:inline-grid; grid-template-columns:auto auto; align-items:baseline; column-gap:.7em; row-gap:.05rem; text-align:center; }' +
+	'.pg-clients .pg-cn { min-width:11ch; }' +
+	'.pg-clients .pg-cs { min-width:11ch; font-size:.85em; font-weight:bold; }' +
+	'.pg-clients .pg-cs-dn { color:var(--pg-dn); }' +
+	'.pg-clients .pg-cs-up { color:var(--pg-up); }' +
+	'.pg-clients .pg-trafbox { display:inline-grid; grid-template-columns:auto auto; align-items:baseline; column-gap:.35em; row-gap:.05rem; }' +
 	'.pg-clients .pg-sort { cursor:pointer; user-select:none; }' +
 	'.pg-clients .pg-sort:hover, .pg-clients .pg-sort:focus-visible { background:rgba(128,128,128,.12); outline:none; }' +
 	'.pg-clients .pg-sortind { display:inline-block; margin-left:.35em; font-size:.7em; opacity:.7; vertical-align:middle; }' +
@@ -71,7 +88,14 @@ const CSS =
 	wideCss('.pg-clients') +
 	'  .pg-clients .td.pg-host, .pg-clients .td.pg-tag { white-space:normal; }' +
 	'  .pg-clients .td.pg-host { overflow-wrap:anywhere; }' +
-	'  .pg-clients .td.pg-type, .pg-clients .td.pg-traf { width:1%; }' +
+	'  .pg-clients { table-layout:fixed; }' +
+	'  .pg-clients .tr > :nth-child(1) { width:19%; }' +
+	'  .pg-clients .tr > :nth-child(2) { width:22%; }' +
+	'  .pg-clients .tr > :nth-child(3) { width:27%; }' +
+	'  .pg-clients .tr > :nth-child(4) { width:14%; }' +
+	'}' +
+	'@container (min-width: 900px) {' +
+	'  .pg-clients .tr > :nth-child(1), .pg-clients .tr > :nth-child(2), .pg-clients .tr > :nth-child(3), .pg-clients .tr > :nth-child(4) { width:22%; }' +
 	'}' +
 	'@container (max-width: ' + (RULES_TABLE_MIN - 1) + 'px) {' +
 	narrowCss('.pg-rules') +
@@ -86,20 +110,18 @@ const CSS =
 	'}' +
 	'@container (max-width: ' + (CLIENTS_TABLE_MIN - 1) + 'px) {' +
 	narrowCss('.pg-clients') +
-	'  .pg-clients .tr.cbi-section-table-row { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"host tag" "ip ip" "mac mac" "traf traf"; }' +
+	'  .pg-clients .tr.cbi-section-table-row { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"host tag" "addr traf"; align-items:start; column-gap:.5rem; }' +
 	'  .pg-clients .td.pg-host { grid-area:host; font-weight:600; overflow-wrap:anywhere; }' +
 	'  .pg-clients .td.pg-tag { grid-area:tag; justify-self:end; }' +
-	'  .pg-clients .tr.cbi-section-table-row .td.pg-addr { display:contents !important; }' +
-	'  .pg-clients .pg-ip { grid-area:ip; overflow-wrap:anywhere; }' +
-	'  .pg-clients .pg-mac { grid-area:mac; }' +
+	'  .pg-clients .td.pg-addr { grid-area:addr; }' +
+	'  .pg-clients .pg-ip { overflow-wrap:anywhere; }' +
 	'  .pg-clients .tr.cbi-section-table-row .td.pg-type { display:none !important; }' +
-	'  .pg-clients .td.pg-traf { grid-area:traf; font-size:.9em; }' +
-	'  .pg-clients .pg-cn, .pg-clients .pg-cs { min-width:0; }' +
+	'  .pg-clients .td.pg-traf { grid-area:traf; justify-self:end; font-size:.9em; }' +
 	'}' +
 	'@container (min-width: 501px) and (max-width: ' + (CLIENTS_TABLE_MIN - 1) + 'px) {' +
-	'  .pg-clients .tr.cbi-section-table-row { grid-template-columns:minmax(0,1fr) minmax(0,1.2fr) 6.2rem; grid-template-areas:"host ip tag" "host mac tag" "traf traf tag"; align-items:center; column-gap:.75rem; }' +
-	'  .pg-clients .pg-ip, .pg-clients .pg-mac { text-align:center; }' +
-	'  .pg-clients .tr.cbi-section-table-row .td.pg-tag { align-self:center; justify-self:stretch; text-align:right !important; }' +
+	'  .pg-clients .tr.cbi-section-table-row { grid-template-columns:minmax(0,1fr) 9.5rem 10rem; grid-template-areas:"host addr tag" "host addr traf"; align-items:center; column-gap:.5rem; }' +
+	'  .pg-clients .tr.cbi-section-table-row .td.pg-tag { align-self:end; justify-self:end; text-align:right !important; }' +
+	'  .pg-clients .td.pg-traf { grid-area:traf; align-self:start; justify-self:end; }' +
 	'  .pg-clients .td.pg-tag .pg-label { margin:1px 0 1px 4px; }' +
 	'}' +
 	'@container (min-width: 501px) and (max-width: ' + (RULES_TABLE_MIN - 1) + 'px) {' +
@@ -127,11 +149,11 @@ const CSS =
 	'.pg-switch:hover { filter:brightness(.95); }' +
 	'.pg-switch:disabled { opacity:.6; cursor:default; }' +
 	'.pg-switch::before { content:""; width:.55rem; height:.55rem; border-radius:50%; background:currentColor; }' +
-	'.pg-switch.on { color:#1a7f37; background:#dafbe1; }' +
-	'.pg-switch.warn { color:#9a6700; background:#fff8c5; }' +
+	'.pg-switch.on { color:var(--pg-on-fg); background:var(--pg-on-bg); }' +
+	'.pg-switch.warn { color:var(--pg-warn-fg); background:var(--pg-warn-bg); }' +
 	'.pg-switch.na { color:#6b7280; background:rgba(128,128,128,.18); }' +
 	'.pg-switch.na:disabled { opacity:1; cursor:not-allowed; }' +
-	'.pg-switch.off { color:#82071e; background:#ffebe9; }';
+	'.pg-switch.off { color:var(--pg-off-fg); background:var(--pg-off-bg); }';
 
 function formatBytes(n) {
 	n = Number(n) || 0;
@@ -171,7 +193,122 @@ function cmpAddr(x, y) {
 	if (!!x.offline !== !!y.offline)
 		return x.offline ? -1 : 1;
 
-	return x.offline ? 0 : cmpIp(x.ip, y.ip);
+	return x.offline ? 0 : cmpIp(x.addrs[0].ip, y.addrs[0].ip);
+}
+
+function tagText(c) {
+	return ((c.is_server ? ['Server'] : []).concat(c.tags || [])).join(' ');
+}
+
+function tagNames(c) {
+	return (c.is_server ? [ 'Server' ] : []).concat(c.tags || []);
+}
+
+function tagColorMap(clients) {
+	const names = {};
+
+	clients.forEach(c => tagNames(c).forEach(t => { names[t.toLowerCase()] = true; }));
+
+	const map = {};
+
+	Object.keys(names).sort().forEach((n, i) => { map[n] = i % 7; });
+
+	return map;
+}
+
+function tagBadges(c, colors) {
+	return tagNames(c).map(t => {
+		return textEl('span', 'pg-label pg-t' + (colors[t.toLowerCase()] || 0), t);
+	});
+}
+
+function fmtAge(sec) {
+	sec = Math.max(0, Math.round(sec || 0));
+
+	return (sec < 60) ? sec + ' s' : Math.floor(sec / 60) + ' min';
+}
+
+function groupByMac(c) {
+	const by = {}, order = [];
+
+	(c.addrs || []).forEach(a => {
+		if (!by[a.mac]) {
+			by[a.mac] = [];
+			order.push(a.mac);
+		}
+
+		by[a.mac].push(a);
+	});
+
+	return { by: by, order: order };
+}
+
+const IND1 = '\u00a0\u00a0\u00a0\u00a0';
+
+function trafDetail(c, rates) {
+	const g = groupByMac(c);
+	let up = 0, down = 0;
+
+	const blocks = g.order.map(m => [ m ].concat(...g.by[m].map(a => {
+		const r = rates[a.ip] || { up: 0, down: 0 };
+
+		up += a.up || 0;
+		down += a.down || 0;
+
+		return [
+			IND1 + (a.ip.indexOf(':') > -1 ? 'IPv6' : 'IPv4') + '  ' + a.ip,
+			IND1 + '\u2191 ' + formatBytes(a.up || 0) + '  ' + formatBytes(r.up) + '/s \u2193 ' + formatBytes(a.down || 0) + '  ' + formatBytes(r.down) + '/s'
+		];
+	})).join('\n'));
+
+	const ru = (c.up || 0) - up, rd = (c.down || 0) - down;
+
+	if (ru > 0 || rd > 0)
+		blocks.push([ _('Earlier addresses'), IND1 + '\u2191 ' + formatBytes(Math.max(ru, 0)) + ' \u2193 ' + formatBytes(Math.max(rd, 0)) ].join('\n'));
+
+	return blocks.join('\n\n');
+}
+
+function addrDetail(c) {
+	if (c.offline)
+		return (c.macs || []).concat([ '', _('No traffic for more than 10 minutes') ]).join('\n');
+
+	const g = groupByMac(c);
+
+	return g.order.map(m => [ m ].concat(g.by[m].map(a =>
+		IND1 + (a.ip.indexOf(':') > -1 ? 'IPv6' : 'IPv4') + '  ' + a.ip + '  (' + fmtAge(a.age) + ' ' + _('ago') + ')'
+	)).join('\n')).join('\n\n');
+}
+
+function hostLabel(c) {
+	if (!c.hostname)
+		return E('em', {}, [ 'unknown' ]);
+
+	const n = textEl('span', '', c.hostname);
+
+	if (c.members && c.members.length > 1)
+		n.title = c.members.join('\n');
+
+	return n;
+}
+
+function familyOf(c) {
+	if (c.offline)
+		return 'offline';
+
+	const v6 = c.addrs.some(a => a.ip.indexOf(':') > -1);
+	const v4 = c.addrs.some(a => a.ip.indexOf(':') < 0);
+
+	return (v4 && v6) ? 'dual' : (v6 ? 'v6' : 'v4');
+}
+
+const FAMILY_LABEL = { v4: 'IPv4', v6: 'IPv6', dual: 'IPv4 / IPv6', offline: '' };
+const FAMILY_RANK = { offline: -1, v4: 0, dual: 1, v6: 2 };
+
+function firstMac(c) {
+	const m = c.offline ? c.macs[0] : c.addrs[0].mac;
+
+	return m || '';
 }
 
 function textEl(tag, cls, text) {
@@ -222,6 +359,7 @@ function actionBadge(raw) {
 return view.extend({
 	lastBytes: {},
 	lastClient: {},
+	lastAddr: {},
 	lastRate: {},
 	sort: { key: 'host', dir: 1 },
 	shownOrder: null,
@@ -398,7 +536,7 @@ return view.extend({
 			split('addr', _('IP Address'), 'mac', _('MAC')),
 			split('traf', _('Traffic'), 'speed', _('Speed')),
 			th('type', _('Type')),
-			th('tag', _('Tag'))
+			th('tag', _('Device'))
 		]);
 
 		this.paintHeader(tr);
@@ -433,10 +571,10 @@ return view.extend({
 
 		list.forEach(c => { by[c.id] = c; });
 
-		const macOf = c => (c.mac && c.mac !== '\u2014') ? c.mac : '';
+		const macOf = firstMac;
 		const byName = (a, b) => String(by[a].hostname || '').localeCompare(String(by[b].hostname || ''), undefined, { numeric: true, sensitivity: 'base' });
 
-		const rank = c => c.offline ? -1 : (c.ip.indexOf(':') > -1 ? 1 : 0);
+		const rank = c => FAMILY_RANK[familyOf(c)];
 
 		const cmp = (a, b) => {
 			const x = by[a], y = by[b];
@@ -453,7 +591,7 @@ return view.extend({
 			case 'type':
 				return rank(x) - rank(y);
 			case 'tag':
-				return (x.is_server ? 1 : 0) - (y.is_server ? 1 : 0);
+				return tagText(x).localeCompare(tagText(y), undefined, { sensitivity: 'base' });
 			}
 
 			return byName(a, b);
@@ -486,11 +624,12 @@ return view.extend({
 	updateClients(clients, dt) {
 		this.curClients = clients;
 
-		const key = JSON.stringify(clients.map(c => [ c.id, c.ip, c.mac, c.hostname, c.is_server, !!c.offline, c.up != null ]));
+		const key = JSON.stringify(clients.map(c => [ c.id, (c.addrs || []).map(a => [ a.ip, a.mac ]), c.macs, c.hostname, c.members, c.tags, c.is_server, !!c.offline, c.up != null ]));
 
 		if (key !== this.clientKey) {
 			this.clientKey = key;
 			this.clientRefs = {};
+			this.tagColors = tagColorMap(clients);
 
 			const crows = [ this.clientHeader() ];
 
@@ -498,11 +637,7 @@ return view.extend({
 				crows.push(emptyRow(5, _('No VPN clients configured.')));
 
 			clients.forEach((c, i) => {
-				const isV6 = String(c.ip).indexOf(':') > -1;
-				const tag = E('td', { 'class': 'td pg-tag' }, [ badge('VPN', '#46a546') ]);
-
-				if (c.is_server)
-					tag.appendChild(badge('Server', '#0069d6'));
+				const tag = E('td', { 'class': 'td pg-tag' }, tagBadges(c, this.tagColors));
 
 				if (c.offline) {
 					const ref = { offline: true };
@@ -526,10 +661,11 @@ return view.extend({
 					this.clientRefs[c.id] = ref;
 
 					ref.row = E('tr', { 'class': 'tr cbi-section-table-row cbi-rowstyle-' + (1 + i % 2) }, [
-						cell(c.hostname ? textEl('span', '', c.hostname) : E('em', {}, [ 'unknown' ]), 'pg-host'),
-						E('td', { 'class': 'td pg-addr' }, [
-							textEl('div', 'pg-ip pg-offline', _('Offline')),
-							textEl('div', 'pg-mac', c.mac || '\u2014')
+						cell(hostLabel(c), 'pg-host'),
+						E('td', { 'class': 'td pg-addr', 'title': addrDetail(c) }, [
+							E('div', { 'class': 'pg-pair' }, [
+								textEl('div', 'pg-ip pg-offline', _('Offline'))
+							].concat((c.macs || []).map(m => textEl('div', 'pg-mac', m))))
 						]),
 						traf,
 						cell(textEl('span', '', ''), 'pg-type'),
@@ -553,18 +689,18 @@ return view.extend({
 
 				this.clientRefs[c.id] = ref;
 
-				const traf = E('td', { 'class': 'td pg-traf', 'title': _('Upload / Download') }, [
+				const traf = ref.traf = E('td', { 'class': 'td pg-traf', 'title': _('Upload / Download') }, [
 					E('div', { 'class': 'pg-trafbox' }, [ ref.tu.o, ref.su.o, ref.td.o, ref.sd.o ])
 				]);
 
 				ref.row = E('tr', { 'class': 'tr cbi-section-table-row cbi-rowstyle-' + (1 + i % 2) }, [
-					cell(c.hostname ? textEl('span', '', c.hostname) : E('em', {}, [ 'unknown' ]), 'pg-host'),
-					E('td', { 'class': 'td pg-addr' }, [
-						textEl('div', 'pg-ip' + (isV6 ? ' pg-ip6' : ''), c.ip),
-						textEl('div', 'pg-mac', c.mac || '\u2014')
-					]),
+					cell(hostLabel(c), 'pg-host'),
+					ref.addr = E('td', { 'class': 'td pg-addr' }, groupByMac(c).order.map(m => E('div', { 'class': 'pg-pair' },
+						groupByMac(c).by[m].map(a => textEl('div', 'pg-ip' + (a.ip.indexOf(':') > -1 ? ' pg-ip6' : ''), a.ip))
+							.concat([ textEl('div', 'pg-mac', m) ])
+					))),
 					traf,
-					cell(textEl('span', '', isV6 ? 'IPv6' : 'IPv4'), 'pg-type'),
+					cell(textEl('span', '', FAMILY_LABEL[familyOf(c)]), 'pg-type'),
 					tag
 				]);
 
@@ -592,6 +728,20 @@ return view.extend({
 
 				return;
 			}
+
+			ref.addr.title = addrDetail(c);
+
+			const arate = {};
+
+			(c.addrs || []).forEach(a => {
+				const pa = this.lastAddr[a.ip];
+				const r = (cur, old) => (old !== undefined && cur >= old && dt > 0) ? (cur - old) / dt : 0;
+
+				arate[a.ip] = { up: r(a.up || 0, pa && pa.up), down: r(a.down || 0, pa && pa.down) };
+				this.lastAddr[a.ip] = { up: a.up || 0, down: a.down || 0 };
+			});
+
+			ref.traf.title = trafDetail(c, arate);
 
 			const up = c.up, down = c.down;
 
