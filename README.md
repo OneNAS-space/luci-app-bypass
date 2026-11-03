@@ -54,11 +54,18 @@ previous rules untouched.
 
 ## LuCI page
 
-- **Main Switch** and **Natmap qB-port Direct** on one row. Click a badge to enable / disable. Natmap shows
-  *Not Installed* (not clickable) when `/etc/config/natmap` is absent.
+- **Main Switch** and **Natmap qB Direct** on one row. Click a badge to enable / disable. Natmap shows
+  *Not Installed* (not clickable) when `/etc/config/natmap` is absent. With Natmap enabled, the badge also tells
+  what the watcher is doing (hover it for the full explanation):
+
+  | Badge | Meaning |
+  |---|---|
+  | green **Enabled · Watching** | the watcher is running and Natmap has a running instance |
+  | amber **Enabled · No instances** | the watcher is running, but Natmap has no running instance yet; it picks the ports up once Natmap starts |
+  | amber **Enabled · No qB entry** | no enabled Natmap entry is recognised as qBittorrent, so no watcher is running |
 - **Traffic Statistics** tab: packets, bytes and current speed of every rule, with a readable action label, and a
   final **Total (all Direct rules)** row: everything the direct rules kept away from PassWall2.
-  The qBittorrent rules are only listed while Natmap is installed and **Natmap qB-port Direct** is enabled.
+  The qBittorrent rules are only listed while Natmap is installed and **Natmap qB Direct** is enabled.
   The counters of the `dynamic_logic` rules restart from zero whenever the rules are reloaded.
 - **VPN Clients** tab: one row per address a VPN client currently uses: hostname, IP address over MAC, **traffic and
   speed of the proxied traffic only** (↑ upload / ↓ download), IPv4 / IPv6 type and the `VPN` / `Server` badges.
