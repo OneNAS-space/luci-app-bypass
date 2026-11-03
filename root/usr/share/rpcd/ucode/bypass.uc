@@ -7,6 +7,8 @@ import { popen, access, writefile } from 'fs';
 const CONF = 'bypass';
 const SECTION = 'global';
 const INIT = '/etc/init.d/bypass';
+const SEEN_TTL = 604800;
+const ONLINE_WITHIN = 600;
 const NFT = '/usr/sbin/nft';
 
 function run(cmd) {
@@ -208,9 +210,25 @@ function collect_rules(chains, show_qb) {
 function load_hosts() {
 	const ctx = cursor();
 	const list = [];
+	const by_group = {};
 
 	ctx.foreach('dhcp', 'host', (s) => {
-		const tags = lc(join(' ', (type(s.tag) == 'array') ? s.tag : [ s.tag ?? '' ]));
+		let group = '';
+		const plain = [];
+		const labels = [];
+
+		for (let t in ((type(s.tag) == 'array') ? s.tag : split(s.tag ?? '', /[ \t]+/))) {
+			if (match(lc(t), /^grp-./))
+				group = (group != '') ? group : substr(t, 4);
+			else {
+				push(plain, lc(t));
+
+				if (t != '' && index(lc(t), 'vpn') < 0 && !match(lc(t), /(^|[^a-z0-9_])server([^a-z0-9_]|$)/))
+					push(labels, t);
+			}
+		}
+
+		const tags = join(' ', plain);
 
 		if (index(tags, 'vpn') < 0 || !s.mac)
 			return;
@@ -224,25 +242,48 @@ function load_hosts() {
 				push(macs, m);
 		}
 
-		if (length(macs))
-			push(list, { name: s.name ?? 'Configured-Device', macs: macs, server: !!match(tags, /(^|[^a-z0-9_])server([^a-z0-9_]|$)/) });
+		if (!length(macs))
+			return;
+
+		const name = s.name ?? '';
+		const server = !!match(tags, /(^|[^a-z0-9_])server([^a-z0-9_]|$)/);
+		let h = (group != '') ? by_group[lc(group)] : null;
+
+		if (h) {
+			for (let m in macs)
+				if (index(h.macs, m) < 0)
+					push(h.macs, m);
+
+			h.server = h.server || server;
+
+			for (let t in labels)
+				if (!length(filter(h.tags, (x) => lc(x) == lc(t))))
+					push(h.tags, t);
+
+			if (name != '')
+				push(h.members, name);
+
+			return;
+		}
+
+		h = {
+			name: (group != '') ? group : ((name != '') ? name : 'Configured-Device'),
+			macs: macs,
+			server: server,
+			tags: labels,
+			members: (group != '' && name != '') ? [ name ] : []
+		};
+
+		push(list, h);
+
+		if (group != '')
+			by_group[lc(group)] = h;
 	});
 
+	for (let h in list)
+		h.macs = sort(h.macs);
+
 	return list;
-}
-
-function load_neighbours() {
-	const map = {};
-
-	for (let line in split(run('ip neigh show'), '\n')) {
-		const f = split(trim(line), /[ \t]+/);
-		const i = index(f, 'lladdr');
-
-		if (i >= 0 && f[0] && f[i + 1])
-			map[f[0]] = lc(f[i + 1]);
-	}
-
-	return map;
 }
 
 let SETS = {};
@@ -265,19 +306,22 @@ function load_sets() {
 	for (let item in doc.nftables) {
 		if (type(item) == 'object' && type(item.set) == 'object' && type(item.set.name) == 'string')
 			SETS[item.set.name] = (type(item.set.elem) == 'array') ? item.set.elem : [];
+		else if (type(item) == 'object' && type(item.map) == 'object' && type(item.map.name) == 'string')
+			SETS[item.map.name] = (type(item.map.elem) == 'array') ? item.map.elem : [];
 	}
 }
 
-function fetch_set(name) {
+function fetch_seen(name) {
 	const out = [];
 
 	for (let el in (SETS[name] ?? [])) {
-		if (type(el) == 'string')
-			push(out, el);
-		else if (type(el) == 'object' && type(el.elem) == 'object' && type(el.elem.val) == 'string')
-			push(out, el.elem.val);
-		else if (type(el) == 'object' && type(el.prefix) == 'object')
-			push(out, el.prefix.addr + '/' + el.prefix.len);
+		if (type(el) != 'array' || type(el[0]) != 'object' || type(el[0].elem) != 'object' || type(el[1]) != 'string')
+			continue;
+
+		const e = el[0].elem;
+
+		if (type(e.val) == 'string')
+			push(out, { ip: e.val, mac: lc(el[1]), age: SEEN_TTL - int(e.expires ?? 0) });
 	}
 
 	return out;
@@ -311,68 +355,61 @@ function collect_clients() {
 	for (let k, v in fetch_acct('acct_dn6'))
 		down[k] = v;
 
-	const hosts = load_hosts();
-	const neigh = load_neighbours();
+	const rows = {};
 	const by_mac = {};
-	const online = {};
-	const shown = {};
-	const clients = [];
+	const order = [];
 
-	for (let h in hosts)
+	for (let h in load_hosts()) {
+		const r = {
+			id: 'h:' + h.macs[0],
+			hostname: h.name,
+			is_server: h.server,
+			macs: map(h.macs, uc),
+			members: h.members,
+			tags: h.tags,
+			addrs: [],
+			up: 0,
+			down: 0
+		};
+
+		rows[r.id] = r;
+		push(order, r);
+
 		for (let m in h.macs)
-			by_mac[m] = h;
-
-	for (let ip in [ ...fetch_set('vpn_seen4'), ...fetch_set('vpn_seen6') ]) {
-		const mac = neigh[ip] ?? '';
-		const h = (mac != '') ? by_mac[mac] : null;
-
-		if (mac != '')
-			online[mac] = true;
-
-		shown[ip] = true;
-
-		push(clients, {
-			id: ip,
-			ip: ip,
-			mac: (mac != '') ? uc(mac) : '\u2014',
-			hostname: h ? h.name : '',
-			is_server: h ? h.server : false,
-			up: up[ip] ?? 0,
-			down: down[ip] ?? 0
-		});
+			by_mac[m] = r;
 	}
 
-	const past = {};
+	for (let e in [ ...fetch_seen('vpn_seen4'), ...fetch_seen('vpn_seen6') ]) {
+		const r = by_mac[e.mac];
 
-	for (let ip in keys({ ...up, ...down })) {
-		const m = shown[ip] ? '' : (neigh[ip] ?? '');
-
-		if (m == '' || !by_mac[m])
+		if (!r)
 			continue;
 
-		if (!past[m])
-			past[m] = { up: 0, down: 0 };
+		r.up += up[e.ip] ?? 0;
+		r.down += down[e.ip] ?? 0;
 
-		past[m].up += up[ip] ?? 0;
-		past[m].down += down[ip] ?? 0;
+		if (e.age <= ONLINE_WITHIN)
+			push(r.addrs, { ip: e.ip, mac: uc(e.mac), age: e.age, up: up[e.ip] ?? 0, down: down[e.ip] ?? 0 });
 	}
 
-	for (let h in hosts) {
-		for (let m in h.macs) {
-			if (online[m])
-				continue;
+	const clients = [];
 
-			const row = {
-				id: 'off:' + m,
-				offline: true,
-				mac: uc(m),
-				hostname: h.name,
-				is_server: h.server
-			};
+	for (let r in order) {
+		if (length(r.addrs)) {
+			r.addrs = sort(r.addrs, (a, b) => {
+				const fa = (index(a.ip, ':') >= 0) ? 1 : 0, fb = (index(b.ip, ':') >= 0) ? 1 : 0;
 
-			if (past[m] && (past[m].up || past[m].down)) {
-				row.up = past[m].up;
-				row.down = past[m].down;
+				return (fa != fb) ? fa - fb : ((a.ip < b.ip) ? -1 : (a.ip > b.ip) ? 1 : 0);
+			});
+
+			push(clients, { id: r.id, hostname: r.hostname, members: r.members, tags: r.tags, is_server: r.is_server, addrs: r.addrs, up: r.up, down: r.down });
+		}
+		else {
+			const row = { id: r.id, offline: true, hostname: r.hostname, members: r.members, tags: r.tags, is_server: r.is_server, macs: r.macs };
+
+			if (r.up || r.down) {
+				row.up = r.up;
+				row.down = r.down;
 			}
 
 			push(clients, row);
