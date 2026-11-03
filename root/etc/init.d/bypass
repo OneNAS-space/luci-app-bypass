@@ -6,17 +6,14 @@ CONF="bypass"
 SECTION="global"
 readonly LAN_IF=$(uci -q get network.lan.device || uci -q get network.lan.ifname || echo "br-lan")
 
-# PassWall2 tags every connection it proxies with a conntrack mark (FWMARK in its nftables.sh: PSW2_RULE sets
-# "ct mark" only for flows that take a proxy rule). Direct flows, bypass's own and PassWall2's, never get it.
-# Read from PassWall2 itself so a changed value is followed; the default is the current one.
+# PassWall2 ct mark of proxied flows
 get_psw_fwmark() {
     local m
     m=$(sed -n 's/^FWMARK="\(0x[0-9a-fA-F]*\)".*/\1/p' /usr/share/passwall2/nftables.sh 2>/dev/null | head -n 1)
     echo "${m:-0x50535732}"
 }
 
-# Current L3 devices of wan/wan6 as an nft set literal, e.g. { "pppoe-wan" }.
-# Evaluated at call time so PPPoE (device name only exists once connected) works.
+# wan/wan6 L3 devices as an nft set literal
 get_wan_set() {
     local n d list="" out="" x
     for n in wan wan6; do
@@ -35,6 +32,7 @@ del_rules_by_comment() {
     done
 }
 
+# static_privilege: direct rules; dynamic_logic: marking; acct_*: client addresses and counters
 setup_nft() {
     local wan_set=$(get_wan_set)
     local psw_mark=$(get_psw_fwmark)
@@ -47,16 +45,11 @@ setup_nft() {
         nft "add chain inet bypass_logic static_privilege_output { type filter hook output priority -410; policy accept; }" 2>/dev/null
     fi
 
-    # VPN clients are identified by MAC address (the "mac" of the DHCP host entries tagged VPN), not by IP:
-    # a device keeps being a VPN client whatever addresses it takes (privacy / temporary IPv6, tokens, renumbering).
-    # The set is refilled by sync_clients; its elements are bare MACs.
     nft "add set inet bypass_logic vpn_macs { type ether_addr; }" 2>/dev/null
     nft "add set inet bypass_logic qb_dynamic_ports { type inet_service; flags timeout; }" 2>/dev/null
     nft "add set inet bypass_logic qb_outer_ports { type inet_service; }" 2>/dev/null
     nft "add set inet bypass_logic stun_direct { type ipv4_addr; flags interval; }" 2>/dev/null
 
-    # Connections of the VPN clients to remote port 7844 go direct: these set up peer-to-peer tunnels (Cloudflare
-    # tunnels, NetBird, WireGuard and similar) and have to leave without the proxy.
     if ! nft list table inet bypass_logic | grep -q "P2P-Tunnel-Setup-tcp-Direct"; then
         nft add rule inet bypass_logic static_privilege iifname "$LAN_IF" ether saddr @vpn_macs meta nfproto ipv4 tcp dport 7844 counter meta mark set 0xff accept comment "P2P-Tunnel-Setup-tcp-Direct"
     fi
@@ -87,17 +80,9 @@ setup_nft() {
         nft add rule inet bypass_logic static_privilege udp sport @qb_dynamic_ports counter meta mark set 0xff accept comment "qB-udp-sport-Direct"
     fi
 
-    # Addresses of the VPN clients, learned from the traffic itself: every packet that comes from a VPN client's MAC
-    # (see vpn_macs) refreshes its source address in vpn_seen4/6, which expire after an hour without traffic. So the
-    # page only lists addresses a client really uses, and they never need to be configured or looked up.
-    # Link-local and unspecified addresses are not recorded.
     nft "add set inet bypass_logic vpn_seen4 { type ipv4_addr; flags dynamic,timeout; timeout 1h; size 1024; }" 2>/dev/null
     nft "add set inet bypass_logic vpn_seen6 { type ipv6_addr; flags dynamic,timeout; timeout 1h; size 1024; }" 2>/dev/null
 
-    # Per-client traffic accounting for the LuCI page: sets with per-element counters, separate for upload (source)
-    # and download (destination). The elements are created by the rules below the first time a client's proxied
-    # traffic is seen, and are kept for a week without any. The sets are never flushed, so the counters survive a
-    # reload and only reset when the service stops.
     nft "add set inet bypass_logic acct_up4 { type ipv4_addr; flags dynamic,timeout; timeout 7d; size 1024; counter; }" 2>/dev/null
     nft "add set inet bypass_logic acct_dn4 { type ipv4_addr; flags dynamic,timeout; timeout 7d; size 1024; counter; }" 2>/dev/null
     nft "add set inet bypass_logic acct_up6 { type ipv6_addr; flags dynamic,timeout; timeout 7d; size 1024; counter; }" 2>/dev/null
@@ -107,27 +92,14 @@ setup_nft() {
         nft "add chain inet bypass_logic qb_fix { type nat hook prerouting priority -110; }"
     fi
 
-    # The chains that mark LAN traffic (dynamic_logic) and count it (acct_in, acct_out) are rebuilt in ONE nft
-    # transaction: a reload never leaves a moment in which LAN packets pass unmarked (and a non-VPN device would
-    # be proxied). If the transaction fails, the previous rules stay in place untouched.
     local lan_addr=$(ip -4 -o addr show dev "$LAN_IF" scope global 2>/dev/null | awk '{print $4}' | head -n1)
     local lan_addr6=$(ip -6 addr show dev "$LAN_IF" 2>/dev/null | grep 'scope global' | awk '{print $2}' | head -n1)
     local rules_file="/tmp/bypass_rules.nft" err
     {
-        # Only traffic that PassWall2 proxies is counted (ct mark == PassWall2's FWMARK, see get_psw_fwmark): the
-        # page shows what a client sends through the proxy. Direct traffic (bypass rules, PassWall2 direct rules)
-        # and traffic to the router itself are not included. A set element counter is bumped by every lookup that
-        # matches it, so each counting set is only ever touched by the one rule that updates it (and the "ct mark"
-        # test comes first); membership tests use the counter-less vpn_seen sets instead.
-        # Upload is counted in prerouting, download in postrouting. Unlike the forward hook these also see the
-        # traffic PassWall2 handles: its TPROXY delivers packets to a local process (input) and the replies are
-        # generated locally (output), neither of which is ever "forwarded". The upload chain has to run after
-        # PassWall2's own prerouting chains (priority -151 and later), which is where the first packet of a flow
-        # gets its ct mark.
         echo "add chain inet bypass_logic acct_in { type filter hook prerouting priority -50; policy accept; }"
         echo "flush chain inet bypass_logic acct_in"
-        echo "add rule inet bypass_logic acct_in iifname \"$LAN_IF\" ether saddr @vpn_macs ip saddr != 0.0.0.0 update @vpn_seen4 { ip saddr }"
-        echo "add rule inet bypass_logic acct_in iifname \"$LAN_IF\" ether saddr @vpn_macs ip6 saddr != { fe80::/10, ::/128 } update @vpn_seen6 { ip6 saddr }"
+        echo "add rule inet bypass_logic acct_in iifname \"$LAN_IF\" ether saddr @vpn_macs ip saddr != 0.0.0.0 fib saddr . iif oif != 0 update @vpn_seen4 { ip saddr }"
+        echo "add rule inet bypass_logic acct_in iifname \"$LAN_IF\" ether saddr @vpn_macs ip6 saddr != { fe80::/10, ::/128 } fib saddr . iif oif != 0 update @vpn_seen6 { ip6 saddr }"
         echo "add rule inet bypass_logic acct_in iifname \"$LAN_IF\" ct mark $psw_mark ether saddr @vpn_macs ip saddr != 0.0.0.0 update @acct_up4 { ip saddr }"
         echo "add rule inet bypass_logic acct_in iifname \"$LAN_IF\" ct mark $psw_mark ether saddr @vpn_macs ip6 saddr != { fe80::/10, ::/128 } update @acct_up6 { ip6 saddr }"
 
@@ -142,15 +114,9 @@ setup_nft() {
         [ -n "$lan_addr" ] && echo "add rule inet bypass_logic dynamic_logic ip daddr $lan_addr counter return comment \"Loopback-Fix\""
         [ -n "$lan_addr6" ] && echo "add rule inet bypass_logic dynamic_logic ip6 daddr $lan_addr6 counter return comment \"Loopback-v6-Fix\""
 
-        # Always hand VPN clients over to PassWall2 (mark 0). If PassWall2 is not running nothing catches them and
-        # they simply go direct, so there is no boot-order dependency.
         echo "add rule inet bypass_logic dynamic_logic iifname \"$LAN_IF\" ether saddr @vpn_macs meta nfproto ipv4 meta mark != 0xff counter meta mark set 0 accept comment \"AGENT-PASS\""
         echo "add rule inet bypass_logic dynamic_logic iifname \"$LAN_IF\" ether saddr @vpn_macs meta nfproto ipv6 meta mark != 0xff counter meta mark set 0 accept comment \"AGENT-PASS-V6\""
 
-        # Everything left from the LAN here belongs to devices that are not VPN clients: mark it 0xff so
-        # PassWall2 leaves it alone and it goes out directly. Packets that already carry 0xff were sent direct by a
-        # rule of static_privilege (this chain still sees them after that chain accepted them): they are not counted
-        # a second time, and there is nothing left to do for them.
         echo "add rule inet bypass_logic dynamic_logic iifname \"$LAN_IF\" meta mark != 0xff counter meta mark set 0xff accept comment \"Non-VPN-Client-Direct\""
     } > "$rules_file"
 
@@ -159,8 +125,7 @@ setup_nft() {
     rm -f "$rules_file"
 }
 
-# MACs of the DHCP hosts whose tag list contains VPN (any case; the same rule the LuCI page uses), one per line.
-# Named and anonymous host sections both count; a host entry may list several MACs.
+# MACs of DHCP hosts whose tag contains VPN
 collect_vpn_macs() {
     config_load dhcp
     scan_host() {
@@ -177,14 +142,13 @@ collect_vpn_macs() {
     config_foreach scan_host host
 }
 
+# refill vpn_macs in one nft transaction
 sync_clients() {
     local nft_file="/tmp/bypass_sync.nft"
     local macs mac
 
     macs=$(collect_vpn_macs)
 
-    # Flush and refill the set in ONE nft transaction, so there is no empty window and a failure leaves the
-    # previous contents untouched. (The Server tag is only a label on the page; it needs no rule.)
     {
         echo "flush set inet bypass_logic vpn_macs"
         for mac in $macs; do
@@ -260,7 +224,7 @@ manage_natmap() {
             local section="$1"
             local comment current
             config_get comment "$section" "comment"
-            [ "$comment" = "qBittorrent" ] || return 0
+            case "$comment" in qB*) ;; *) return 0 ;; esac
             config_get current "$section" "custom_script"
             if [ "$current" = "$script_path" ]; then
                 uci set natmap."$section".custom_script=""
@@ -284,7 +248,7 @@ manage_natmap() {
         local section="$1"
         local comment current
         config_get comment "$section" "comment"
-        [ "$comment" = "qBittorrent" ] || return 0
+        case "$comment" in qB*) ;; *) return 0 ;; esac
         config_get current "$section" "custom_script"
         if [ "$current" != "$script_path" ]; then
             uci set natmap."$section".custom_script="$script_path"
@@ -326,7 +290,6 @@ manage_natmap() {
     if [ -f "$qb_outer_port_file" ]; then
         local op=$(cat "$qb_outer_port_file")
         if [ -n "$op" ]; then
-            # Replace (not append): ports of earlier STUN mappings must not stay marked direct.
             printf 'flush set inet bypass_logic qb_outer_ports\nadd element inet bypass_logic qb_outer_ports { %s }\n' "$op" | nft -f - 2>/dev/null
             logger -t bypass "Sync: Restored cached qB Outer Port $op"
         fi
@@ -357,9 +320,6 @@ start_service() {
     manage_natmap "$natmap_en"
 
     procd_open_instance "bypass"
-    # The rules live in the kernel; keep a tiny resident instance so that "status" reports running (used by LuCI).
-    # A single sleep process (no shell loop): procd stops exactly this process on restart, so no
-    # orphaned "sleep 3600" is left behind by the loop's child.
     procd_set_param command /bin/sleep 2147483647
     procd_set_param stdout 1
     procd_set_param stderr 1
