@@ -176,10 +176,6 @@ sync_clients() {
 manage_natmap() {
     local natmap_en="$1"
     local stun_script="/usr/share/bypass/scripts/stun_sync.sh"
-    local script_path="/usr/share/bypass/scripts/natmap_bypass.sh"
-    local cache_dir="/tmp/natmap_cache"
-    local qb_port_file="/tmp/natmap_qb_inner_port"
-    local qb_outer_port_file="/tmp/natmap_cache/natmap_last_port"
 
     if [ "$natmap_en" -eq 1 ] && [ -f "$stun_script" ]; then
         nft flush chain inet bypass_logic static_privilege_output
@@ -198,104 +194,64 @@ manage_natmap() {
         rm -f /tmp/stun_servers.etag /tmp/stun_servers.txt
     fi
 
-    if [ -d "$cache_dir" ]; then
-        for ext in tcp_fix_rule old_port; do
-            ls -t "$cache_dir"/*."$ext" 2>/dev/null | awk '{
-                line = "cat " $1; line | getline content; close(line);
-                if (content in seen) {
-                    system("rm -f " $1); 
-                } else {
-                    seen[content] = $1;
-                }
-            }' 2>/dev/null
-        done
-    fi
-
     if ! nft list chain inet bypass_logic qb_fix >/dev/null 2>&1; then
         nft "add chain inet bypass_logic qb_fix { type nat hook prerouting priority -110; }" 2>/dev/null
     fi
-    if ! nft list set inet bypass_logic qb_outer_ports >/dev/null 2>&1; then
-        nft "add set inet bypass_logic qb_outer_ports { type inet_service; }" 2>/dev/null
-    fi
-    if [ "$natmap_en" -ne 1 ]; then
-        local changed=0
-        config_load natmap
-        do_detach() {
-            local section="$1"
-            local comment current
-            config_get comment "$section" "comment"
-            case "$comment" in qB*) ;; *) return 0 ;; esac
-            config_get current "$section" "custom_script"
-            if [ "$current" = "$script_path" ]; then
-                uci set natmap."$section".custom_script=""
-                changed=1
-            fi
-        }
-        config_foreach do_detach natmap
-        if [ "$changed" -eq 1 ]; then
-            uci commit natmap
-            /etc/init.d/natmap reload
-        fi
 
+    # The qB ports and port forwards are kept by natmap_watch.sh; with Natmap switched off nothing is left of them.
+    if [ "$natmap_en" -ne 1 ]; then
         nft flush chain inet bypass_logic qb_fix 2>/dev/null
         nft flush set inet bypass_logic qb_outer_ports 2>/dev/null
-        return 0
+        nft flush set inet bypass_logic qb_dynamic_ports 2>/dev/null
     fi
+}
 
-    local changed=0
+# Natmap entries that carry qBittorrent: enabled, with a comment starting with "qB" or with the port refresh
+# for the qBittorrent client script (refresh + clt_script .../qBittorrent). Result in QB_SIDS. Read only.
+qb_check() {
+    local s="$1" enable comment refresh clt hit=0
+    config_get_bool enable "$s" enable 0
+    [ "$enable" = "1" ] || return 0
+    config_get comment "$s" comment
+    config_get refresh "$s" refresh 0
+    config_get clt "$s" clt_script
+    case "$comment" in qB*) hit=1 ;; esac
+    [ "$refresh" = "1" ] && [ "${clt##*/}" = "qBittorrent" ] && hit=1
+    [ "$hit" = "1" ] && QB_SIDS="$QB_SIDS $s"
+    return 0
+}
+
+qb_sids() {
+    QB_SIDS=""
+    [ -e /etc/config/natmap ] || return 0
     config_load natmap
-    do_attach() {
-        local section="$1"
-        local comment current
-        config_get comment "$section" "comment"
-        case "$comment" in qB*) ;; *) return 0 ;; esac
-        config_get current "$section" "custom_script"
-        if [ "$current" != "$script_path" ]; then
-            uci set natmap."$section".custom_script="$script_path"
-            changed=1
-        fi
-    }
-    config_foreach do_attach natmap
-    if [ "$changed" -eq 1 ]; then
-        uci commit natmap
-        /etc/init.d/natmap reload
-    fi
+    config_foreach qb_check natmap
+}
 
-    if [ -d "$cache_dir" ]; then
-        if ls "$cache_dir"/*.tcp_fix_rule >/dev/null 2>&1; then
-            unique_rules=$(cat "$cache_dir"/*.tcp_fix_rule 2>/dev/null | sort -u)
-        fi
-    fi
-    {
-        echo "flush chain inet bypass_logic qb_fix"
-        if [ -n "$unique_rules" ]; then
-            local wan_set=$(get_wan_set)
-            echo "$unique_rules" | while read -r rule; do
-                rule=$(echo "$rule" | sed "s|__WAN__|$wan_set|")
-                [ -n "$rule" ] && echo "add rule inet bypass_logic qb_fix $rule"
-            done
-        fi
-    } | nft -f - 2>/dev/null
+# The procd instances: the idle one that makes "status" report running, and, only while Natmap is switched on and
+# a qBittorrent entry exists, the watcher that follows Natmap's status files.
+define_instances() {
+    local natmap_en
+    config_load "$CONF"
+    config_get_bool natmap_en "$SECTION" "enable_natmap" 0
 
-    if [ -f "$qb_port_file" ]; then
-        local p=$(cat "$qb_port_file")
-        if [ -n "$p" ]; then
-            nft "add element inet bypass_logic qb_dynamic_ports { $p }" 2>/dev/null
-            logger -t bypass "Sync: Restored cached qB Port $p"
-        fi
-    else
-        logger -t bypass "Sync: No natmap cache found, skipping port restore"
-    fi
+    procd_open_instance "bypass"
+    procd_set_param command /bin/sleep 2147483647
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    procd_set_param respawn
+    procd_close_instance
 
-    if [ -f "$qb_outer_port_file" ]; then
-        local op=$(cat "$qb_outer_port_file")
-        if [ -n "$op" ]; then
-            printf 'flush set inet bypass_logic qb_outer_ports\nadd element inet bypass_logic qb_outer_ports { %s }\n' "$op" | nft -f - 2>/dev/null
-            logger -t bypass "Sync: Restored cached qB Outer Port $op"
-        fi
-    else
-        logger -t bypass "Sync: No natmap cache found, skipping outer port restore"
-    fi
+    [ "$natmap_en" -eq 1 ] || return 0
+    qb_sids
+    [ -n "$QB_SIDS" ] || return 0
+
+    procd_open_instance "natmap_watch"
+    procd_set_param command /bin/sh /usr/share/bypass/scripts/natmap_watch.sh $QB_SIDS
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    procd_set_param respawn
+    procd_close_instance
 }
 
 refresh_nft() {
@@ -305,6 +261,7 @@ refresh_nft() {
 
 start_service() {
     local enabled natmap_en
+    [ -n "$INSTANCES_ONLY" ] && { define_instances; return 0; }
     config_load "$CONF"
     config_get_bool enabled "$SECTION" "enable_bypass" 0
     config_get_bool natmap_en "$SECTION" "enable_natmap" 0
@@ -318,13 +275,7 @@ start_service() {
     logger -t bypass "DEBUG: refresh_nft triggered by [INIT_START]"
     refresh_nft
     manage_natmap "$natmap_en"
-
-    procd_open_instance "bypass"
-    procd_set_param command /bin/sleep 2147483647
-    procd_set_param stdout 1
-    procd_set_param stderr 1
-    procd_set_param respawn
-    procd_close_instance
+    define_instances
 }
 
 stop_service() {
@@ -344,10 +295,23 @@ reload_service() {
     logger -t bypass "DEBUG: refresh_nft triggered by [RELOAD_FUNC]"
     refresh_nft
     manage_natmap "$natmap_en"
+
+    # the WAN device may have changed: bring the qB rules up to date right away, then re-register the instances
+    # (the watcher starts, stops or restarts as the Natmap entries require)
+    if [ "$natmap_en" -eq 1 ]; then
+        qb_sids
+        [ -n "$QB_SIDS" ] && sh /usr/share/bypass/scripts/natmap_watch.sh --once $QB_SIDS
+    fi
+    if type rc_procd >/dev/null 2>&1; then
+        rc_procd define_instances
+    else
+        INSTANCES_ONLY=1 start
+    fi
 }
 
 service_triggers() {
     procd_add_reload_trigger "passwall2"
+    procd_add_reload_trigger "natmap"
     procd_add_reload_trigger "dhcp"
     procd_add_interface_trigger "interface.*.up" "wan" /etc/init.d/bypass reload
     procd_add_interface_trigger "interface.*.up" "wan6" /etc/init.d/bypass reload
