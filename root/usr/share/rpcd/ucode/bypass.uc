@@ -18,7 +18,6 @@ import { popen, access, writefile } from 'fs';
 const CONF = 'bypass';
 const SECTION = 'global';
 const INIT = '/etc/init.d/bypass';
-const NATMAP_SCRIPT = '/usr/share/bypass/scripts/natmap_bypass.sh';
 const NFT = '/usr/sbin/nft';
 
 /* ---------- helpers ---------- */
@@ -463,16 +462,6 @@ const methods = {
 
 			ctx.set(CONF, SECTION, 'enable_natmap', val);
 			save_config(ctx, CONF);
-
-			if (access('/etc/config/natmap')) {
-				ctx.foreach('natmap', 'natmap', (s) => {
-					if (match(s.comment ?? '', /^qB/))
-						ctx.set('natmap', s['.name'], 'custom_script', (val == '1') ? NATMAP_SCRIPT : '');
-				});
-
-				save_config(ctx, 'natmap');
-				system([ '/etc/init.d/natmap', 'reload' ], 30000);
-			}
 
 			if (system(INIT + ' status >/dev/null 2>&1') == 0)
 				system([ INIT, 'reload' ], 30000);
