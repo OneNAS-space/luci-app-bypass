@@ -9,8 +9,8 @@ include $(INCLUDE_DIR)/package.mk
 PKG_LICENSE:=GPL-3.0-or-later
 PKG_MAINTAINER:=Jackie Han <jackie.han@gmail.com>
 PKG_NAME:=luci-app-bypass
-PKG_VERSION:=1.0.0
-PKG_RELEASE:=2
+PKG_VERSION:=1.0.1
+PKG_RELEASE:=1
 
 define Package/$(PKG_NAME)
 	SECTION:=luci
@@ -44,7 +44,7 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_BIN) ./root/etc/uci-defaults/40_bypass $(1)/etc/uci-defaults/
 
 	$(INSTALL_DIR) $(1)/usr/share/bypass/scripts
-	$(INSTALL_BIN) ./root/usr/share/bypass/scripts/natmap_bypass.sh $(1)/usr/share/bypass/scripts/natmap_bypass.sh
+	$(INSTALL_BIN) ./root/usr/share/bypass/scripts/natmap_watch.sh $(1)/usr/share/bypass/scripts/natmap_watch.sh
 	$(INSTALL_BIN) ./root/usr/share/bypass/scripts/stun_sync.sh $(1)/usr/share/bypass/scripts/stun_sync.sh
 
 	$(INSTALL_DIR) $(1)/usr/share/rpcd/ucode
