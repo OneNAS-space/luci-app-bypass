@@ -19,8 +19,12 @@ PassWall2 decides what is proxied; this package decides which LAN traffic never 
 - The `Server` tag has no effect on the rules; it is only a badge on the client page, so that a server can be
   recognised at a glance. Tags are combined freely (`VPN` plus `Server`).
 - Local-delivery and LAN-subnet destinations are left untouched (`Local-Fix`, `Loopback-Fix`, `Loopback-v6-Fix`).
-- Optional **Natmap qBittorrent port integration**: when the Natmap port changes, the matching direct rules and
-  dual-stack port forwards follow (see below).
+- Optional **Natmap qBittorrent port integration**: while the switch is on, a small watcher follows Natmap's status
+  files (`/var/run/natmap/*.json`) and keeps the qB direct rules (`qB-*`, the port forward of the TCP side of
+  BitTorrent) in line with the current public and inner ports. It is only started while the switch is on **and**
+  an enabled Natmap entry carries qBittorrent: its `comment` starts with `qB`, or it has `refresh` on with the
+  `qBittorrent` client script. Natmap's configuration is only read, never changed, so an entry's own
+  `custom_script` is left alone and Natmap is never restarted by this package.
 - The VPN client set is rebuilt automatically when `dhcp`, `passwall2` or the WAN interfaces change.
 
 ## Rules at a glance
@@ -40,7 +44,8 @@ previous rules untouched.
 ### Client addresses and accounting
 
 - Every packet from a VPN client's MAC refreshes its source address in the sets `vpn_seen4` / `vpn_seen6`
-  (link-local addresses excluded). They expire after an hour without traffic, so the page lists the addresses a
+  (link-local addresses excluded, and only addresses the router has a route back to through the LAN interface:
+  a stray source address such as a virtual adapter's is not listed). They expire after an hour without traffic, so the page lists the addresses a
   device really uses, with nothing to configure.
 - Proxied traffic is counted per address in the dynamic sets `acct_up4/6` and `acct_dn4/6` (per-element counters).
   Only traffic PassWall2 proxies is counted (conntrack mark equal to PassWall2's `FWMARK`, read from
@@ -92,6 +97,8 @@ To remove everything cleanly: `apk del luci-app-bypass --purge` (or `opkg remove
 - `/etc/init.d/bypass` keeps one idle `/bin/sleep 2147483647` process under procd so that `status` reports *running*;
   the rules need no process.
 - The STUN server list used with Natmap is fetched with `curl`.
+- The Natmap watcher polls every 5 seconds without starting any program besides `sleep`; a port change reaches
+  the rules within that time. Nothing is written to flash.
 - Requires `rpcd-mod-ucode`, `ucode-mod-fs`, `ucode-mod-uci` and a PassWall2 install on firewall4 (nft).
 - The repository name must equal the package name (`luci-app-bypass`) for the CI workflow.
 
