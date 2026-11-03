@@ -466,7 +466,7 @@ const methods = {
 
 			if (access('/etc/config/natmap')) {
 				ctx.foreach('natmap', 'natmap', (s) => {
-					if (s.comment == 'qBittorrent')
+					if (match(s.comment ?? '', /^qB/))
 						ctx.set('natmap', s['.name'], 'custom_script', (val == '1') ? NATMAP_SCRIPT : '');
 				});
 
