@@ -218,7 +218,7 @@ function load_hosts() {
 		const labels = [];
 
 		for (let t in ((type(s.tag) == 'array') ? s.tag : split(s.tag ?? '', /[ \t]+/))) {
-			if (match(lc(t), /^grp-./))
+			if (match(lc(t), /^grp[-_]./))
 				group = (group != '') ? group : substr(t, 4);
 			else {
 				push(plain, lc(t));
@@ -405,7 +405,7 @@ function collect_clients() {
 			push(clients, { id: r.id, hostname: r.hostname, members: r.members, tags: r.tags, is_server: r.is_server, addrs: r.addrs, up: r.up, down: r.down });
 		}
 		else {
-			const row = { id: r.id, offline: true, hostname: r.hostname, members: r.members, tags: r.tags, is_server: r.is_server, macs: r.macs };
+			const row = { id: r.id, inactive: true, hostname: r.hostname, members: r.members, tags: r.tags, is_server: r.is_server, macs: r.macs };
 
 			if (r.up || r.down) {
 				row.up = r.up;
