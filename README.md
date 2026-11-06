@@ -9,7 +9,7 @@ managed by `/etc/init.d/bypass`. **No translations are shipped** (strings are wr
 PassWall2 decides what is proxied; this package decides which LAN traffic never reaches it.
 
 - **VPN clients are identified by MAC address.** A DHCP host entry (`/etc/config/dhcp`, `config host`) whose `tag`
-  list contains `VPN` (any case; a tag such as `grp-VPNBox` does not count) and which has one or more `mac` entries
+  list contains `VPN` (any case; a tag such as `grp-VPNBox` or `grp_VPNBox` does not count) and which has one or more `mac` entries
   is a VPN client. Such a device is handed to
   PassWall2 whatever IP address it uses (IPv4, IPv6, privacy / temporary addresses, renumbering), so it needs no
   static address.
@@ -19,8 +19,9 @@ PassWall2 decides what is proxied; this package decides which LAN traffic never 
   peer-to-peer tunnels (Cloudflare tunnels, NetBird and similar) and have to leave without the proxy.
 - **Several network cards, one device.** A host can have several `config host` entries (one per NIC, each with its own
   name). Give them all the same tag `grp-<Name>` (for example `grp-MacBook`) and the page shows them as one device
-  called `<Name>`; hover the name to see the entries behind it. `grp-` tags are ignored by the rules. Entries without
-  a `grp-` tag are shown one per entry, by their own name.
+  called `<Name>`; hover the name to see the entries behind it. `grp-` tags are ignored by the rules. `grp_<Name>` works the same way (LuCI's *Match Tag* field does not accept a
+  hyphen, so use the underscore there); both spellings can be mixed and the name is case-insensitive. Entries without
+  a `grp` tag are shown one per entry, by their own name.
 - The `Server` tag has no effect on the rules; it is only a badge on the client page, so that a server can be recognised at a glance.
   Tags are combined freely (`VPN` plus `Server` plus `grp-...` plus anything else).
 - Local-delivery and LAN-subnet destinations are left untouched (`Local-Fix`, `Loopback-Fix`, `Loopback-v6-Fix`).
@@ -52,7 +53,7 @@ previous rules untouched.
   (address → MAC; link-local addresses excluded, and only addresses the router has a route back to through the LAN
   interface: a stray source address such as a virtual adapter's is not listed). The MAC is stored with the address,
   so the page knows exactly which card an address belongs to. Entries are kept for a week, and the page counts an
-  address as **online** while it has had traffic within the last 10 minutes; nothing to configure.
+  address as **active** while it has had traffic within the last 10 minutes; nothing to configure.
 - Proxied traffic is counted per address in the dynamic sets `acct_up4/6` and `acct_dn4/6` (per-element counters).
   Only traffic PassWall2 proxies is counted (conntrack mark equal to PassWall2's `FWMARK`, read from
   `/usr/share/passwall2/nftables.sh`); direct traffic is not included. Elements are kept for a week without traffic.
@@ -75,19 +76,19 @@ previous rules untouched.
   final **Total (all Direct rules)** row: everything the direct rules kept away from PassWall2.
   The qBittorrent rules are only listed while Natmap is installed and **Natmap qB Direct** is enabled.
   The counters of the `dynamic_logic` rules restart from zero whenever the rules are reloaded.
-- **VPN Clients** tab: one row per device (hosts sharing a `grp-` tag are one device), with these columns:
+- **VPN Clients** tab: one row per device (hosts sharing a `grp-` / `grp_` tag are one device), with these columns:
   - **Hostname**; hover for the `config host` entries of a grouped device.
   - **IP Address / MAC**: the addresses in use now (IPv4 first, then IPv6), then the MAC they belong to. A device with
-    several network cards lists each MAC with its own addresses. A device is online while any of its addresses has
-    had traffic within 10 minutes.
+    several network cards lists each MAC with its own addresses. A device is active while any of its addresses has
+    had traffic (proxied or direct) within 10 minutes.
   - **Traffic / speed of the proxied traffic only** (↑ upload / ↓ download), added up over all addresses, centred so
     the numbers do not jiggle when they change. Hover for the split per address and MAC, with each address's own speed.
   - **Type**: IPv4, IPv6 or both.
-  - **Device**: `Server` and every other tag except `VPN` and `grp-...` (for example `phone`, `pc`), as coloured badges;
+  - **Device**: `Server` and every other tag except `VPN` and `grp-...` / `grp_...` (for example `phone`, `pc`), as coloured badges;
     the same tag always has the same colour. The colours follow the LuCI theme, dark mode included.
 
-  A configured VPN device with no recent traffic is listed as a red **Offline** row with the totals it last moved
-  (no speed).
+  A configured VPN device with no traffic for 10 minutes is listed as a grey **Inactive** row with the totals it last
+  moved (no speed). It may still be online, e.g. asleep; the page does not try to tell.
   Click a column title to sort; click again to reverse.
 - Refreshes every second in place (no scroll jumps), and adapts to the width: table, three-zone layout or cards (traffic and speed move under the Device badges on narrow screens).
 
