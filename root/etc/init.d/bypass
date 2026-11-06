@@ -135,7 +135,7 @@ collect_vpn_macs() {
     scan_host() {
         local s="$1" tags mac m
         config_get tags "$s" tag
-        tags=$(echo "$tags" | tr 'A-Z' 'a-z' | tr ' ' '\n' | grep -v '^grp-')
+        tags=$(echo "$tags" | tr 'A-Z' 'a-z' | tr ' ' '\n' | grep -v '^grp[-_]')
         case "$tags" in *vpn*) ;; *) return 0 ;; esac
         config_get mac "$s" mac
         for m in $mac; do
