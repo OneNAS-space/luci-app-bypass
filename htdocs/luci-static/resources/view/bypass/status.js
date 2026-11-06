@@ -33,12 +33,12 @@ function narrowCss(sel) {
 
 const LIGHT_VARS =
 	'--pg-t0:#d9534f; --pg-t1:#e8820c; --pg-t2:#b8860b; --pg-t3:#3d9a4a; --pg-t4:#139aa8; --pg-t5:#0069d6; --pg-t6:#7e57c2;' +
-	'--pg-up:#1a7f37; --pg-dn:#0969da; --pg-offline:#d9534f;' +
+	'--pg-up:#1a7f37; --pg-dn:#0969da;' +
 	'--pg-on-fg:#1a7f37; --pg-on-bg:#dafbe1; --pg-warn-fg:#9a6700; --pg-warn-bg:#fff8c5; --pg-off-fg:#82071e; --pg-off-bg:#ffebe9;';
 
 const DARK_VARS =
 	'--pg-t0:#b9444a; --pg-t1:#b8691a; --pg-t2:#8f6d0b; --pg-t3:#2f7d3f; --pg-t4:#11808c; --pg-t5:#2a5fb0; --pg-t6:#6a4aa8;' +
-	'--pg-up:#4ade80; --pg-dn:#6cb0ff; --pg-offline:#ff8a8a;' +
+	'--pg-up:#4ade80; --pg-dn:#6cb0ff;' +
 	'--pg-on-fg:#7ee2a0; --pg-on-bg:rgba(46,160,67,.22); --pg-warn-fg:#e3b341; --pg-warn-bg:rgba(187,128,9,.22); --pg-off-fg:#ffa9ae; --pg-off-bg:rgba(248,81,73,.18);';
 
 const CSS =
@@ -63,7 +63,7 @@ const CSS =
 	'.pg-clients .pg-ip, .pg-clients .pg-mac { display:block; }' +
 	'.pg-clients .pg-mac { font-size:.85em; opacity:.8; }' +
 	'.pg-clients .pg-pair + .pg-pair { margin-top:.35rem; }' +
-	'.pg-clients .pg-offline { color:var(--pg-offline); font-weight:bold; }' +
+	'.pg-clients .pg-inactive { color:var(--pg-warn-fg); font-weight:bold; }' +
 	'.pg-clients .pg-cn, .pg-clients .pg-cs { display:inline-flex; align-items:baseline; gap:.3em; white-space:nowrap; }' +
 	'.pg-clients .pg-cn, .pg-clients .pg-cs { justify-content:center; }' +
 	'.pg-clients .pg-arr { font-size:.7em; margin-right:.3em; vertical-align:.08em; }' +
@@ -190,10 +190,10 @@ function cmpIp(a, b) {
 }
 
 function cmpAddr(x, y) {
-	if (!!x.offline !== !!y.offline)
-		return x.offline ? -1 : 1;
+	if (!!x.inactive !== !!y.inactive)
+		return x.inactive ? -1 : 1;
 
-	return x.offline ? 0 : cmpIp(x.addrs[0].ip, y.addrs[0].ip);
+	return x.inactive ? 0 : cmpIp(x.addrs[0].ip, y.addrs[0].ip);
 }
 
 function tagText(c) {
@@ -270,7 +270,7 @@ function trafDetail(c, rates) {
 }
 
 function addrDetail(c) {
-	if (c.offline)
+	if (c.inactive)
 		return (c.macs || []).concat([ '', _('No traffic for more than 10 minutes') ]).join('\n');
 
 	const g = groupByMac(c);
@@ -293,8 +293,8 @@ function hostLabel(c) {
 }
 
 function familyOf(c) {
-	if (c.offline)
-		return 'offline';
+	if (c.inactive)
+		return 'inactive';
 
 	const v6 = c.addrs.some(a => a.ip.indexOf(':') > -1);
 	const v4 = c.addrs.some(a => a.ip.indexOf(':') < 0);
@@ -302,11 +302,11 @@ function familyOf(c) {
 	return (v4 && v6) ? 'dual' : (v6 ? 'v6' : 'v4');
 }
 
-const FAMILY_LABEL = { v4: 'IPv4', v6: 'IPv6', dual: 'IPv4 / IPv6', offline: '' };
-const FAMILY_RANK = { offline: -1, v4: 0, dual: 1, v6: 2 };
+const FAMILY_LABEL = { v4: 'IPv4', v6: 'IPv6', dual: 'IPv4 / IPv6', inactive: '' };
+const FAMILY_RANK = { inactive: -1, v4: 0, dual: 1, v6: 2 };
 
 function firstMac(c) {
-	const m = c.offline ? c.macs[0] : c.addrs[0].mac;
+	const m = c.inactive ? c.macs[0] : c.addrs[0].mac;
 
 	return m || '';
 }
@@ -624,7 +624,7 @@ return view.extend({
 	updateClients(clients, dt) {
 		this.curClients = clients;
 
-		const key = JSON.stringify(clients.map(c => [ c.id, (c.addrs || []).map(a => [ a.ip, a.mac ]), c.macs, c.hostname, c.members, c.tags, c.is_server, !!c.offline, c.up != null ]));
+		const key = JSON.stringify(clients.map(c => [ c.id, (c.addrs || []).map(a => [ a.ip, a.mac ]), c.macs, c.hostname, c.members, c.tags, c.is_server, !!c.inactive, c.up != null ]));
 
 		if (key !== this.clientKey) {
 			this.clientKey = key;
@@ -639,8 +639,8 @@ return view.extend({
 			clients.forEach((c, i) => {
 				const tag = E('td', { 'class': 'td pg-tag' }, tagBadges(c, this.tagColors));
 
-				if (c.offline) {
-					const ref = { offline: true };
+				if (c.inactive) {
+					const ref = { inactive: true };
 					let traf = E('td', { 'class': 'td pg-traf' });
 
 					if (c.up != null) {
@@ -664,7 +664,7 @@ return view.extend({
 						cell(hostLabel(c), 'pg-host'),
 						E('td', { 'class': 'td pg-addr', 'title': addrDetail(c) }, [
 							E('div', { 'class': 'pg-pair' }, [
-								textEl('div', 'pg-ip pg-offline', _('Offline'))
+								E('div', { 'class': 'pg-ip pg-inactive', 'title': _('No traffic for 10 minutes; the device may still be online') }, _('Inactive'))
 							].concat((c.macs || []).map(m => textEl('div', 'pg-mac', m))))
 						]),
 						traf,
@@ -717,7 +717,7 @@ return view.extend({
 			if (!ref)
 				return;
 
-			if (ref.offline) {
+			if (ref.inactive) {
 				delete this.lastClient[c.id];
 				this.lastRate[c.id] = 0;
 
