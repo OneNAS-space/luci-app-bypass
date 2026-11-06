@@ -9,6 +9,7 @@ const SECTION = 'global';
 const INIT = '/etc/init.d/bypass';
 const SEEN_TTL = 604800;
 const ONLINE_WITHIN = 600;
+const UI_REV = 1;
 const NFT = '/usr/sbin/nft';
 
 function run(cmd) {
@@ -427,6 +428,7 @@ const methods = {
 			const table_up = (system(NFT + ' list table inet bypass_logic >/dev/null 2>&1') == 0);
 
 			return {
+				rev: UI_REV,
 				enabled: enabled,
 				running: enabled && table_up,
 				natmap: (ctx.get(CONF, SECTION, 'enable_natmap') == '1'),
@@ -442,9 +444,10 @@ const methods = {
 			const text = run(NFT + ' -p list table inet bypass_logic');
 
 			if (text == '')
-				return { rules: [], clients: [] };
+				return { rev: UI_REV, rules: [], clients: [] };
 
 			return {
+				rev: UI_REV,
 				rules: collect_rules(parse_chains(text), natmap_active()),
 				clients: collect_clients()
 			};
