@@ -9,7 +9,7 @@ include $(INCLUDE_DIR)/package.mk
 PKG_LICENSE:=GPL-3.0-or-later
 PKG_MAINTAINER:=Jackie Han <jackie.han@gmail.com>
 PKG_NAME:=luci-app-bypass
-PKG_VERSION:=1.0.3
+PKG_VERSION:=1.0.4
 PKG_RELEASE:=1
 
 define Package/$(PKG_NAME)
