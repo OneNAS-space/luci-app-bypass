@@ -12,6 +12,7 @@ const callSetBypass = rpc.declare({ object: 'luci.bypass', method: 'set_bypass',
 const callSetNatmap = rpc.declare({ object: 'luci.bypass', method: 'set_natmap', params: [ 'set' ] });
 
 const POLL_INTERVAL = 1;
+const UI_REV = 1;
 
 const RULES_TABLE_MIN = 661;
 const CLIENTS_TABLE_MIN = 661;
@@ -34,12 +35,12 @@ function narrowCss(sel) {
 const LIGHT_VARS =
 	'--pg-t0:#d9534f; --pg-t1:#e8820c; --pg-t2:#b8860b; --pg-t3:#3d9a4a; --pg-t4:#139aa8; --pg-t5:#0069d6; --pg-t6:#7e57c2;' +
 	'--pg-up:#1a7f37; --pg-dn:#0969da;' +
-	'--pg-on-fg:#1a7f37; --pg-on-bg:#dafbe1; --pg-warn-fg:#9a6700; --pg-warn-bg:#fff8c5; --pg-off-fg:#82071e; --pg-off-bg:#ffebe9;';
+	'--pg-on-fg:#1a7f37; --pg-on-bg:#dafbe1; --pg-warn-fg:#9a6700; --pg-warn-bg:#fff8c5; --pg-off-fg:#82071e; --pg-off-bg:#ffebe9; --pg-toast-bg:#fff8c5;';
 
 const DARK_VARS =
 	'--pg-t0:#b9444a; --pg-t1:#b8691a; --pg-t2:#8f6d0b; --pg-t3:#2f7d3f; --pg-t4:#11808c; --pg-t5:#2a5fb0; --pg-t6:#6a4aa8;' +
 	'--pg-up:#4ade80; --pg-dn:#6cb0ff;' +
-	'--pg-on-fg:#7ee2a0; --pg-on-bg:rgba(46,160,67,.22); --pg-warn-fg:#e3b341; --pg-warn-bg:rgba(187,128,9,.22); --pg-off-fg:#ffa9ae; --pg-off-bg:rgba(248,81,73,.18);';
+	'--pg-on-fg:#7ee2a0; --pg-on-bg:rgba(46,160,67,.22); --pg-warn-fg:#e3b341; --pg-warn-bg:rgba(187,128,9,.22); --pg-off-fg:#ffa9ae; --pg-off-bg:rgba(248,81,73,.18); --pg-toast-bg:#3b300f;';
 
 const CSS =
 	':root { ' + LIGHT_VARS + ' }' +
@@ -58,6 +59,12 @@ const CSS =
 	'.pg-rsp .pg-speed { text-align:center; margin-left:0; }' +
 	'.pg-ip6 { font-size:0.85em; }' +
 	'.pg-wrap { container-type:inline-size; }' +
+	'.pg-err { margin:0 0 .75rem; padding:.5rem .8rem; border-radius:.4rem; color:var(--pg-off-fg); background:var(--pg-off-bg); overflow-wrap:anywhere; }' +
+	'.pg-toast { position:fixed; right:1rem; bottom:1rem; z-index:2000; max-width:min(28rem, calc(100vw - 2rem)); padding:.7rem .9rem; border-radius:.5rem; border:1px solid var(--pg-warn-fg); color:var(--pg-warn-fg); background:var(--pg-toast-bg); box-shadow:0 4px 16px rgba(0,0,0,.3); }' +
+	'.pg-toast p { margin:0 0 .6rem; }' +
+	'.pg-toast .pg-tb { display:flex; gap:.5rem; justify-content:flex-end; }' +
+	'.pg-toast button { font:inherit; cursor:pointer; padding:.2rem .7rem; border-radius:.3rem; border:1px solid var(--pg-warn-fg); color:var(--pg-warn-fg); background:transparent; }' +
+	'.pg-toast button.pg-go { color:var(--pg-toast-bg); background:var(--pg-warn-fg); font-weight:bold; }' +
 	'.pg-tbl .td.pg-tag .pg-label { margin:0 4px 2px 0; }' +
 	'.pg-speed { white-space:nowrap; }' +
 	'.pg-clients .pg-ip, .pg-clients .pg-mac { display:block; }' +
@@ -332,6 +339,15 @@ function cell(child, cls, title) {
 	return td;
 }
 
+function reloadScripts() {
+	const urls = performance.getEntriesByType('resource').map(e => e.name).filter(n => /\/view\/bypass\/status\.js/.test(n));
+
+	if (!urls.length)
+		urls.push(L.resource('view/bypass/status.js'));
+
+	return Promise.all(urls.map(u => fetch(u, { cache: 'reload', credentials: 'same-origin' }))).catch(() => null).then(() => window.location.reload());
+}
+
 function emptyRow(cols, text) {
 	return E('tr', { 'class': 'tr cbi-section-table-row' }, [
 		E('td', { 'class': 'td', 'colspan': String(cols) }, [ E('em', {}, [ text ]) ])
@@ -371,6 +387,8 @@ return view.extend({
 
 	render(st) {
 		st = st || {};
+
+		this.checkRev(st.rev);
 
 		const head = E('div', { 'class': 'cbi-map-descr pg-head' }, [
 			E('span', { 'class': 'pg-natmap' }, [
@@ -413,9 +431,12 @@ return view.extend({
 			])
 		]);
 
+		this.errBox = E('div', { 'class': 'pg-err', 'style': 'display:none' });
+
 		const tabs = E('div', { 'class': 'cbi-section' }, [ node ]);
 
 		ui.tabs.initTabGroup(node.childNodes);
+		root.appendChild(this.errBox);
 		root.appendChild(tabs);
 
 		this.refresh();
@@ -425,7 +446,86 @@ return view.extend({
 	},
 
 	refresh() {
-		return callData().then(data => this.update(data || {})).catch(() => null);
+		return callData().then(data => {
+			this.checkRev(data && data.rev);
+
+			try {
+				this.update(data || {});
+			}
+			catch (e) {
+				console.error(e);
+				this.ruleKey = this.clientKey = this.shownOrder = null;
+				this.showError(_('The page could not display the data: %s').format(e.message || e));
+				return;
+			}
+
+			this.loaded = true;
+			this.showError(null);
+		}, e => {
+			console.error(e);
+			this.showError(_('Cannot read data from the router: %s').format(e.message || e) + ' ' + _('(try: /etc/init.d/rpcd restart)'));
+		});
+	},
+
+	showError(msg) {
+		if (!this.errBox || this.errMsg === msg)
+			return;
+
+		this.errMsg = msg;
+		this.errBox.style.display = msg ? '' : 'none';
+		this.errBox.textContent = msg || '';
+
+		if (msg && !this.loaded)
+			for (const t of [ this.rulesTable, this.clientsTable ]) {
+				const em = t.querySelector('tr:last-child em');
+
+				if (em)
+					em.textContent = _('Unavailable');
+			}
+	},
+
+	checkRev(rev) {
+		if (this.revDismissed || rev === UI_REV)
+			return this.hideToast();
+
+		if (typeof rev === 'number' && rev > UI_REV)
+			this.showToast(_('The plugin has been updated, but this page is still running an old script from the browser cache.'), true);
+		else
+			this.showToast(_('This page is newer than the service on the router. Run /etc/init.d/rpcd restart on the router, then reload.'), false);
+	},
+
+	showToast(text, canReload) {
+		if (this.toast && this.toastText === text)
+			return;
+
+		this.hideToast();
+		this.toastText = text;
+
+		const btns = [];
+
+		if (canReload)
+			btns.push(E('button', { 'class': 'pg-go', 'click': ev => {
+				ev.target.disabled = true;
+				ev.target.textContent = _('Refreshing...');
+				reloadScripts();
+			} }, [ _('Refresh page scripts') ]));
+
+		btns.push(E('button', { 'click': () => { this.revDismissed = true; this.hideToast(); } }, [ _('Dismiss') ]));
+
+		this.toast = E('div', { 'class': 'pg-toast', 'role': 'alert' }, [
+			E('p', {}, [ text ]),
+			E('div', { 'class': 'pg-tb' }, btns)
+		]);
+
+		document.body.appendChild(this.toast);
+	},
+
+	hideToast() {
+		if (this.toast)
+			this.toast.remove();
+
+		this.toast = null;
+		this.toastText = null;
 	},
 
 	update(data) {
