@@ -754,7 +754,7 @@ return view.extend({
 						ref.td = mk('\u2193');
 
 						traf = E('td', { 'class': 'td pg-traf', 'title': _('Upload / Download') }, [
-							E('div', { 'class': 'pg-trafbox' }, [ ref.tu.o, ref.td.o ])
+							E('div', { 'class': 'pg-trafbox' }, [ ref.tu.o, textEl('span', 'pg-cs', '\u00a0'), ref.td.o, textEl('span', 'pg-cs', '\u00a0') ])
 						]);
 					}
 
