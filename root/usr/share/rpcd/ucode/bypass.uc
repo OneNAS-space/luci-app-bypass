@@ -3,13 +3,13 @@
 
 import { cursor } from 'uci';
 import { popen, access, writefile } from 'fs';
+import { load_live, seen, counters, read_store, reset_all, reset_macs } from 'bypass.acct';
 
 const CONF = 'bypass';
 const SECTION = 'global';
 const INIT = '/etc/init.d/bypass';
-const SEEN_TTL = 604800;
 const ONLINE_WITHIN = 600;
-const UI_REV = 1;
+const UI_REV = 2;
 const NFT = '/usr/sbin/nft';
 
 function run(cmd) {
@@ -287,76 +287,9 @@ function load_hosts() {
 	return list;
 }
 
-let SETS = {};
-
-function load_sets() {
-	let doc = null;
-
-	SETS = {};
-
-	try {
-		doc = json(run(NFT + ' -j list table inet bypass_logic'));
-	}
-	catch (e) {
-		doc = null;
-	}
-
-	if (type(doc) != 'object' || type(doc.nftables) != 'array')
-		return;
-
-	for (let item in doc.nftables) {
-		if (type(item) == 'object' && type(item.set) == 'object' && type(item.set.name) == 'string')
-			SETS[item.set.name] = (type(item.set.elem) == 'array') ? item.set.elem : [];
-		else if (type(item) == 'object' && type(item.map) == 'object' && type(item.map.name) == 'string')
-			SETS[item.map.name] = (type(item.map.elem) == 'array') ? item.map.elem : [];
-	}
-}
-
-function fetch_seen(name) {
-	const out = [];
-
-	for (let el in (SETS[name] ?? [])) {
-		if (type(el) != 'array' || type(el[0]) != 'object' || type(el[0].elem) != 'object' || type(el[1]) != 'string')
-			continue;
-
-		const e = el[0].elem;
-
-		if (type(e.val) == 'string')
-			push(out, { ip: e.val, mac: lc(el[1]), age: SEEN_TTL - int(e.expires ?? 0) });
-	}
-
-	return out;
-}
-
-function fetch_acct(name) {
-	const out = {};
-
-	for (let el in (SETS[name] ?? [])) {
-		if (type(el) != 'object' || type(el.elem) != 'object')
-			continue;
-
-		const e = el.elem;
-
-		if (type(e.val) == 'string' && type(e.counter) == 'object')
-			out[e.val] = int(e.counter.bytes);
-	}
-
-	return out;
-}
-
-function collect_clients() {
-	load_sets();
-
-	const up = fetch_acct('acct_up4');
-	const down = fetch_acct('acct_dn4');
-
-	for (let k, v in fetch_acct('acct_up6'))
-		up[k] = v;
-
-	for (let k, v in fetch_acct('acct_dn6'))
-		down[k] = v;
-
-	const rows = {};
+function collect_clients(st) {
+	const live = load_live();
+	const c = counters(live);
 	const by_mac = {};
 	const order = [];
 
@@ -370,51 +303,67 @@ function collect_clients() {
 			tags: h.tags,
 			addrs: [],
 			up: 0,
-			down: 0
+			down: 0,
+			since: st.since
 		};
 
-		rows[r.id] = r;
-		push(order, r);
+		for (let m in h.macs) {
+			const t = st.macs[m];
 
-		for (let m in h.macs)
+			if (t) {
+				r.up += int(t.up ?? 0);
+				r.down += int(t.down ?? 0);
+				r.since = max(r.since, int(t.since ?? 0));
+			}
+
 			by_mac[m] = r;
+		}
+
+		push(order, r);
 	}
 
-	for (let e in [ ...fetch_seen('vpn_seen4'), ...fetch_seen('vpn_seen6') ]) {
+	for (let e in [ ...seen(live, 'vpn_seen4'), ...seen(live, 'vpn_seen6') ]) {
 		const r = by_mac[e.mac];
 
 		if (!r)
 			continue;
 
-		r.up += up[e.ip] ?? 0;
-		r.down += down[e.ip] ?? 0;
+		const u = c.up[e.ip] ?? 0;
+		const d = c.down[e.ip] ?? 0;
 
-		if (e.age <= ONLINE_WITHIN)
-			push(r.addrs, { ip: e.ip, mac: uc(e.mac), age: e.age, up: up[e.ip] ?? 0, down: down[e.ip] ?? 0 });
+		r.up += u;
+		r.down += d;
+
+		if (e.age <= ONLINE_WITHIN) {
+			push(r.addrs, { ip: e.ip, mac: uc(e.mac), age: e.age, up: u, down: d });
+		}
 	}
 
 	const clients = [];
 
 	for (let r in order) {
+		const row = { id: r.id, hostname: r.hostname, members: r.members, tags: r.tags, is_server: r.is_server, since: r.since };
+
 		if (length(r.addrs)) {
-			r.addrs = sort(r.addrs, (a, b) => {
+			row.addrs = sort(r.addrs, (a, b) => {
 				const fa = (index(a.ip, ':') >= 0) ? 1 : 0, fb = (index(b.ip, ':') >= 0) ? 1 : 0;
 
 				return (fa != fb) ? fa - fb : ((a.ip < b.ip) ? -1 : (a.ip > b.ip) ? 1 : 0);
 			});
-
-			push(clients, { id: r.id, hostname: r.hostname, members: r.members, tags: r.tags, is_server: r.is_server, addrs: r.addrs, up: r.up, down: r.down });
+			row.up = r.up;
+			row.down = r.down;
 		}
 		else {
-			const row = { id: r.id, inactive: true, hostname: r.hostname, members: r.members, tags: r.tags, is_server: r.is_server, macs: r.macs };
+			row.inactive = true;
+			row.macs = r.macs;
 
 			if (r.up || r.down) {
 				row.up = r.up;
 				row.down = r.down;
 			}
-
-			push(clients, row);
 		}
+
+		push(clients, row);
 	}
 
 	return clients;
@@ -446,10 +395,13 @@ const methods = {
 			if (text == '')
 				return { rev: UI_REV, rules: [], clients: [] };
 
+			const st = read_store();
+
 			return {
 				rev: UI_REV,
+				since: st.since,
 				rules: collect_rules(parse_chains(text), natmap_active()),
-				clients: collect_clients()
+				clients: collect_clients(st)
 			};
 		}
 	},
@@ -477,6 +429,28 @@ const methods = {
 			}
 
 			return { code: 0 };
+		}
+	},
+
+	reset_all: {
+		call: function() {
+			reset_all();
+
+			return { code: 0 };
+		}
+	},
+
+	reset_device: {
+		args: { id: '' },
+		call: function(req) {
+			for (let h in load_hosts())
+				if ('h:' + h.macs[0] == req.args.id) {
+					reset_macs(h.macs);
+
+					return { code: 0 };
+				}
+
+			return { code: 1, error: 'unknown device' };
 		}
 	},
 
