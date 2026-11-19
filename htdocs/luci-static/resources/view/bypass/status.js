@@ -8,11 +8,13 @@
 
 const callStatus = rpc.declare({ object: 'luci.bypass', method: 'status' });
 const callData = rpc.declare({ object: 'luci.bypass', method: 'data' });
+const callResetAll = rpc.declare({ object: 'luci.bypass', method: 'reset_all' });
+const callResetDevice = rpc.declare({ object: 'luci.bypass', method: 'reset_device', params: [ 'id' ] });
 const callSetBypass = rpc.declare({ object: 'luci.bypass', method: 'set_bypass', params: [ 'set' ] });
 const callSetNatmap = rpc.declare({ object: 'luci.bypass', method: 'set_natmap', params: [ 'set' ] });
 
 const POLL_INTERVAL = 1;
-const UI_REV = 1;
+const UI_REV = 2;
 
 const RULES_TABLE_MIN = 661;
 const CLIENTS_TABLE_MIN = 661;
@@ -78,6 +80,8 @@ const CSS =
 	'.pg-clients .pg-cs { min-width:11ch; font-size:.85em; font-weight:bold; }' +
 	'.pg-clients .pg-cs-dn { color:var(--pg-dn); }' +
 	'.pg-clients .pg-cs-up { color:var(--pg-up); }' +
+	'.pg-clients .pg-rst { display:none; width:1.35rem; height:1.35rem; padding:0; margin:0 .1rem; line-height:1; font-size:.95rem; border:0; border-radius:50%; background:transparent; color:inherit; opacity:.38; cursor:pointer; vertical-align:middle; transition:opacity .15s, background-color .15s, transform .35s; }' +
+	'.pg-clients .pg-rst:hover, .pg-clients .pg-rst:focus-visible { opacity:1; background:rgba(128,128,128,.2); transform:rotate(-360deg); }' +
 	'.pg-clients .pg-trafbox { display:inline-grid; grid-template-columns:auto auto; align-items:baseline; column-gap:.35em; row-gap:.05rem; }' +
 	'.pg-clients .pg-sort { cursor:pointer; user-select:none; }' +
 	'.pg-clients .pg-sort:hover, .pg-clients .pg-sort:focus-visible { background:rgba(128,128,128,.12); outline:none; }' +
@@ -96,10 +100,19 @@ const CSS =
 	'  .pg-clients .td.pg-host, .pg-clients .td.pg-tag { white-space:normal; }' +
 	'  .pg-clients .td.pg-host { overflow-wrap:anywhere; }' +
 	'  .pg-clients { table-layout:fixed; }' +
-	'  .pg-clients .tr > :nth-child(1) { width:19%; }' +
-	'  .pg-clients .tr > :nth-child(2) { width:22%; }' +
-	'  .pg-clients .tr > :nth-child(3) { width:27%; }' +
-	'  .pg-clients .tr > :nth-child(4) { width:14%; }' +
+	'  .pg-clients .pg-rst { display:inline-block; }' +
+	'  .pg-clients .pg-trafbox { grid-template-columns:auto auto auto; }' +
+	'  .pg-clients .pg-trafbox > :nth-child(1) { grid-area:1 / 1; }' +
+	'  .pg-clients .pg-trafbox > :nth-child(2) { grid-area:1 / 3; }' +
+	'  .pg-clients .pg-trafbox > :nth-child(3) { grid-area:2 / 1; }' +
+	'  .pg-clients .pg-trafbox > :nth-child(4) { grid-area:2 / 3; }' +
+	'  .pg-clients .pg-trafbox > .pg-rst { grid-area:1 / 2 / 3 / 3; align-self:center; }' +
+	'  .pg-clients .pg-cn { justify-content:flex-end; }' +
+	'  .pg-clients .pg-cs { justify-content:flex-start; }' +
+	'  .pg-clients .tr > :nth-child(1) { width:18%; }' +
+	'  .pg-clients .tr > :nth-child(2) { width:21%; }' +
+	'  .pg-clients .tr > :nth-child(3) { width:30%; }' +
+	'  .pg-clients .tr > :nth-child(4) { width:13%; }' +
 	'}' +
 	'@container (min-width: 900px) {' +
 	'  .pg-clients .tr > :nth-child(1), .pg-clients .tr > :nth-child(2), .pg-clients .tr > :nth-child(3), .pg-clients .tr > :nth-child(4) { width:22%; }' +
@@ -271,7 +284,7 @@ function trafDetail(c, rates) {
 	const ru = (c.up || 0) - up, rd = (c.down || 0) - down;
 
 	if (ru > 0 || rd > 0)
-		blocks.push([ _('Earlier addresses'), IND1 + '\u2191 ' + formatBytes(Math.max(ru, 0)) + ' \u2193 ' + formatBytes(Math.max(rd, 0)) ].join('\n'));
+		blocks.push([ _('Earlier totals'), IND1 + '\u2191 ' + formatBytes(Math.max(ru, 0)) + ' \u2193 ' + formatBytes(Math.max(rd, 0)) ].join('\n'));
 
 	return blocks.join('\n\n');
 }
@@ -346,6 +359,17 @@ function reloadScripts() {
 		urls.push(L.resource('view/bypass/status.js'));
 
 	return Promise.all(urls.map(u => fetch(u, { cache: 'reload', credentials: 'same-origin' }))).catch(() => null).then(() => window.location.reload());
+}
+
+function resetBtn(cls, label, onClick) {
+	return E('button', { 'type': 'button', 'class': 'pg-rst ' + cls, 'aria-label': label, 'click': ev => {
+		ev.stopPropagation();
+		onClick();
+	} }, [ '\u21ba' ]);
+}
+
+function sinceText(ts) {
+	return ts ? _('Counting since %s').format(new Date(ts * 1000).toLocaleString()) : '';
 }
 
 function emptyRow(cols, text) {
@@ -528,6 +552,31 @@ return view.extend({
 		this.toastText = null;
 	},
 
+	rowReset(c) {
+		const label = _('Reset this device\'s statistics');
+
+		return resetBtn('', label, () => this.confirmReset(_('Reset the traffic statistics of "%s"? Its saved total and current counters are cleared.').format(c.hostname), () => callResetDevice(c.id)));
+	},
+
+	confirmReset(msg, call) {
+		ui.showModal(_('Reset statistics'), [
+			E('p', {}, [ msg ]),
+			E('div', { 'class': 'right' }, [
+				E('button', { 'class': 'btn cbi-button', 'click': ui.hideModal }, [ _('Cancel') ]), ' ',
+				E('button', { 'class': 'btn cbi-button cbi-button-negative', 'click': () => {
+					ui.hideModal();
+
+					call().then(res => {
+						if (!res || res.code !== 0)
+							throw new Error((res && res.error) || 'failed');
+
+						return this.refresh();
+					}).catch(e => ui.addNotification(null, E('p', {}, [ _('Reset failed: %s').format(e.message || e) ]), 'danger'));
+				} }, [ _('Reset') ])
+			])
+		]);
+	},
+
 	update(data) {
 		const now = Date.now();
 		const dt = this.lastSample ? (now - this.lastSample) / 1000 : 0;
@@ -536,6 +585,9 @@ return view.extend({
 
 		this.updateRules(data.rules || [], dt);
 		this.updateClients(data.clients || [], dt);
+
+		if (this.hdrRst)
+			this.hdrRst.title = _('Reset all statistics') + '\n' + sinceText(data.since);
 	},
 
 	keepScroll(fn) {
@@ -627,14 +679,15 @@ return view.extend({
 
 		const th = (key, label) => target(key, label, 'th cbi-section-table-th', 'th');
 
-		const split = (k1, l1, k2, l2) => E('th', { 'class': 'th cbi-section-table-th pg-split' }, [
-			target(k1, l1, 'pg-sort-half', 'span'), '/', target(k2, l2, 'pg-sort-half', 'span')
-		]);
+		const split = (k1, l1, k2, l2, mid) => E('th', { 'class': 'th cbi-section-table-th pg-split' }, [
+			target(k1, l1, 'pg-sort-half', 'span'), mid, '/', target(k2, l2, 'pg-sort-half', 'span')
+		].filter(n => n != null));
 
 		const tr = E('tr', { 'class': 'tr cbi-section-table-titles' }, [
 			th('host', _('Hostname')),
 			split('addr', _('IP Address'), 'mac', _('MAC')),
-			split('traf', _('Traffic'), 'speed', _('Speed')),
+			split('traf', _('Traffic'), 'speed', _('Speed'), this.hdrRst = resetBtn('pg-rst-all', _('Reset all statistics'),
+				() => this.confirmReset(_('Reset the traffic statistics of all VPN clients? The saved totals and the current counters are cleared.'), callResetAll))),
 			th('type', _('Type')),
 			th('tag', _('Device'))
 		]);
@@ -754,7 +807,7 @@ return view.extend({
 						ref.td = mk('\u2193');
 
 						traf = E('td', { 'class': 'td pg-traf', 'title': _('Upload / Download') }, [
-							E('div', { 'class': 'pg-trafbox' }, [ ref.tu.o, textEl('span', 'pg-cs', '\u00a0'), ref.td.o, textEl('span', 'pg-cs', '\u00a0') ])
+							E('div', { 'class': 'pg-trafbox' }, [ ref.tu.o, textEl('span', 'pg-cs', '\u00a0'), ref.td.o, textEl('span', 'pg-cs', '\u00a0'), ref.rst = this.rowReset(c) ])
 						]);
 					}
 
@@ -790,7 +843,7 @@ return view.extend({
 				this.clientRefs[c.id] = ref;
 
 				const traf = ref.traf = E('td', { 'class': 'td pg-traf', 'title': _('Upload / Download') }, [
-					E('div', { 'class': 'pg-trafbox' }, [ ref.tu.o, ref.su.o, ref.td.o, ref.sd.o ])
+					E('div', { 'class': 'pg-trafbox' }, [ ref.tu.o, ref.su.o, ref.td.o, ref.sd.o, ref.rst = this.rowReset(c) ])
 				]);
 
 				ref.row = E('tr', { 'class': 'tr cbi-section-table-row cbi-rowstyle-' + (1 + i % 2) }, [
@@ -824,6 +877,7 @@ return view.extend({
 				if (ref.tu && c.up != null) {
 					ref.tu.v.textContent = formatBytes(c.up);
 					ref.td.v.textContent = formatBytes(c.down);
+					ref.rst.title = _('Reset this device\'s statistics') + '\n' + sinceText(c.since);
 				}
 
 				return;
@@ -842,6 +896,7 @@ return view.extend({
 			});
 
 			ref.traf.title = trafDetail(c, arate);
+			ref.rst.title = _('Reset this device\'s statistics') + '\n' + sinceText(c.since);
 
 			const up = c.up, down = c.down;
 
