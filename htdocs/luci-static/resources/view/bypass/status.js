@@ -13,6 +13,7 @@ const callResetDevice = rpc.declare({ object: 'luci.bypass', method: 'reset_devi
 const callSetBypass = rpc.declare({ object: 'luci.bypass', method: 'set_bypass', params: [ 'set' ] });
 const callSetNatmap = rpc.declare({ object: 'luci.bypass', method: 'set_natmap', params: [ 'set' ] });
 
+const IND1 = '\u00a0\u00a0\u00a0\u00a0';
 const POLL_INTERVAL = 1;
 const UI_REV = 2;
 
@@ -68,13 +69,11 @@ const CSS =
 	'.pg-toast button { font:inherit; cursor:pointer; padding:.2rem .7rem; border-radius:.3rem; border:1px solid var(--pg-warn-fg); color:var(--pg-warn-fg); background:transparent; }' +
 	'.pg-toast button.pg-go { color:var(--pg-toast-bg); background:var(--pg-warn-fg); font-weight:bold; }' +
 	'.pg-tbl .td.pg-tag .pg-label { margin:0 4px 2px 0; }' +
-	'.pg-speed { white-space:nowrap; }' +
 	'.pg-clients .pg-ip, .pg-clients .pg-mac { display:block; }' +
 	'.pg-clients .pg-mac { font-size:.85em; opacity:.8; }' +
 	'.pg-clients .pg-pair + .pg-pair { margin-top:.35rem; }' +
 	'.pg-clients .pg-inactive { color:var(--pg-warn-fg); font-weight:bold; }' +
-	'.pg-clients .pg-cn, .pg-clients .pg-cs { display:inline-flex; align-items:baseline; gap:.3em; white-space:nowrap; }' +
-	'.pg-clients .pg-cn, .pg-clients .pg-cs { justify-content:center; }' +
+	'.pg-clients .pg-cn, .pg-clients .pg-cs { display:inline-flex; align-items:baseline; justify-content:center; gap:.3em; white-space:nowrap; }' +
 	'.pg-clients .pg-arr { font-size:.7em; margin-right:.3em; vertical-align:.08em; }' +
 	'.pg-clients .pg-cn { min-width:11ch; }' +
 	'.pg-clients .pg-cs { min-width:11ch; font-size:.85em; font-weight:bold; }' +
@@ -193,8 +192,20 @@ function formatBytes(n) {
 	return n.toFixed(0) + ' B';
 }
 
+function isV6(ip) {
+	return ip.indexOf(':') > -1;
+}
+
+function ipLine(a) {
+	return IND1 + (isV6(a.ip) ? 'IPv6' : 'IPv4') + '  ' + a.ip;
+}
+
+function rateOf(cur, old, dt) {
+	return (old !== undefined && cur >= old && dt > 0) ? (cur - old) / dt : 0;
+}
+
 function cmpIp(a, b) {
-	const v6a = a.indexOf(':') > -1, v6b = b.indexOf(':') > -1;
+	const v6a = isV6(a), v6b = isV6(b);
 
 	if (v6a !== v6b)
 		return v6a ? 1 : -1;
@@ -221,12 +232,12 @@ function cmpAddr(x, y) {
 	return x.inactive ? 0 : cmpIp(x.addrs[0].ip, y.addrs[0].ip);
 }
 
-function tagText(c) {
-	return ((c.is_server ? ['Server'] : []).concat(c.tags || [])).join(' ');
-}
-
 function tagNames(c) {
 	return (c.is_server ? [ 'Server' ] : []).concat(c.tags || []);
+}
+
+function tagText(c) {
+	return tagNames(c).join(' ');
 }
 
 function tagColorMap(clients) {
@@ -268,8 +279,6 @@ function groupByMac(c) {
 	return { by: by, order: order };
 }
 
-const IND1 = '\u00a0\u00a0\u00a0\u00a0';
-
 function trafDetail(c, rates) {
 	const g = groupByMac(c);
 	let up = 0, down = 0;
@@ -281,7 +290,7 @@ function trafDetail(c, rates) {
 		down += a.down || 0;
 
 		return [
-			IND1 + (a.ip.indexOf(':') > -1 ? 'IPv6' : 'IPv4') + '  ' + a.ip,
+			ipLine(a),
 			IND1 + '\u2191 ' + formatBytes(a.up || 0) + '  ' + formatBytes(r.up) + '/s \u2193 ' + formatBytes(a.down || 0) + '  ' + formatBytes(r.down) + '/s'
 		];
 	})).join('\n'));
@@ -301,7 +310,7 @@ function addrDetail(c) {
 	const g = groupByMac(c);
 
 	return g.order.map(m => [ m ].concat(g.by[m].map(a =>
-		IND1 + (a.ip.indexOf(':') > -1 ? 'IPv6' : 'IPv4') + '  ' + a.ip + '  (' + fmtAge(a.age) + ' ' + _('ago') + ')'
+		ipLine(a) + '  (' + fmtAge(a.age) + ' ' + _('ago') + ')'
 	)).join('\n')).join('\n\n');
 }
 
@@ -321,13 +330,13 @@ function familyOf(c) {
 	if (c.inactive)
 		return 'inactive';
 
-	const v6 = c.addrs.some(a => a.ip.indexOf(':') > -1);
-	const v4 = c.addrs.some(a => a.ip.indexOf(':') < 0);
+	const v6 = c.addrs.some(a => isV6(a.ip));
+	const v4 = c.addrs.some(a => !isV6(a.ip));
 
 	return (v4 && v6) ? 'dual' : (v6 ? 'v6' : 'v4');
 }
 
-const FAMILY_LABEL = { v4: 'IPv4', v6: 'IPv6', dual: 'IPv4 / IPv6', inactive: '' };
+const FAMILY_LABEL = { v4: 'IPv4', v6: 'IPv6', dual: 'IPv4 | IPv6', inactive: '' };
 const FAMILY_RANK = { inactive: -1, v4: 0, dual: 1, v6: 2 };
 
 function firstMac(c) {
@@ -340,6 +349,12 @@ function textEl(tag, cls, text) {
 	const n = E(tag, cls ? { 'class': cls } : {});
 	n.textContent = text;
 	return n;
+}
+
+function arrowCell(cls, arrow) {
+	const v = textEl('span', '', '');
+
+	return { v: v, o: E('span', { 'class': cls }, [ textEl('span', 'pg-arr', arrow), v ]) };
 }
 
 function badge(text, color) {
@@ -367,7 +382,7 @@ function reloadScripts() {
 }
 
 function resetBtn(cls, label, onClick) {
-	return E('button', { 'type': 'button', 'class': 'pg-rst ' + cls, 'aria-label': label, 'click': ev => {
+	return E('button', { 'type': 'button', 'class': cls ? 'pg-rst ' + cls : 'pg-rst', 'aria-label': label, 'click': ev => {
 		ev.stopPropagation();
 		onClick();
 	} }, [ '\u21ba' ]);
@@ -381,6 +396,10 @@ function emptyRow(cols, text) {
 	return E('tr', { 'class': 'tr cbi-section-table-row' }, [
 		E('td', { 'class': 'td', 'colspan': String(cols) }, [ E('em', {}, [ text ]) ])
 	]);
+}
+
+function ruleHeader() {
+	return headerRow([ _('Rule Name'), _('Packets'), _('Bytes'), _('Speed'), _('Action | Comment') ]);
 }
 
 function headerRow(titles) {
@@ -442,7 +461,7 @@ return view.extend({
 		}
 
 		this.rulesTable = E('table', { 'class': 'table cbi-section-table pg-tbl pg-rules' }, [
-			headerRow([ _('Rule Name'), _('Packets'), _('Bytes'), _('Speed'), _('Action / Comment') ]),
+			ruleHeader(),
 			emptyRow(5, _('Collecting data...'))
 		]);
 
@@ -611,7 +630,7 @@ return view.extend({
 		if (direct.length > 1) {
 			rules = rules.concat([ {
 				name: _('Total (all Direct rules)'),
-				comment: 'Direct / Bypassed PassWall2',
+				comment: 'Direct | Bypassed PassWall2',
 				packets: direct.reduce((a, r) => a + (Number(r.packets) || 0), 0),
 				bytes: direct.reduce((a, r) => a + (Number(r.bytes) || 0), 0),
 				total: true
@@ -624,7 +643,7 @@ return view.extend({
 			this.ruleKey = key;
 			this.ruleRefs = {};
 
-			const rows = [ headerRow([ _('Rule Name'), _('Packets'), _('Bytes'), _('Speed'), _('Action / Comment') ]) ];
+			const rows = [ ruleHeader() ];
 
 			if (!rules.length)
 				rows.push(emptyRow(5, _('No traffic data detected yet...')));
@@ -687,13 +706,13 @@ return view.extend({
 		const split = (k1, l1, k2, l2, mid) => E('th', { 'class': 'th cbi-section-table-th pg-split' }, [ E('div', { 'class': 'pg-hg' }, [
 			E('span', { 'class': 'pg-hg1' }, [ target(k1, l1, 'pg-sort-half', 'span') ]),
 			mid,
-			E('span', { 'class': 'pg-hg3' }, [ '/', target(k2, l2, 'pg-sort-half', 'span') ])
+			E('span', { 'class': 'pg-hg3' }, [ '|', target(k2, l2, 'pg-sort-half', 'span') ])
 		].filter(n => n != null)) ]);
 
 		const tr = E('tr', { 'class': 'tr cbi-section-table-titles' }, [
 			th('host', _('Hostname')),
-			split('addr', _('IP'), 'mac', _('MAC')),
-			split('traf', _('Traffic'), 'speed', _('Speed'), this.hdrRst = resetBtn('pg-rst-all', _('Reset all statistics'),
+			split('addr', _('IP addr'), 'mac', _('MAC')),
+			split('traf', _('Traffic'), 'speed', _('Speed'), this.hdrRst = resetBtn('', _('Reset all statistics'),
 				() => this.confirmReset(_('Reset the traffic statistics of all VPN clients? The saved totals and the current counters are cleared.'), callResetAll))),
 			th('type', _('Type')),
 			th('tag', _('Device'))
@@ -731,7 +750,6 @@ return view.extend({
 
 		list.forEach(c => { by[c.id] = c; });
 
-		const macOf = firstMac;
 		const byName = (a, b) => String(by[a].hostname || '').localeCompare(String(by[b].hostname || ''), undefined, { numeric: true, sensitivity: 'base' });
 
 		const rank = c => FAMILY_RANK[familyOf(c)];
@@ -743,7 +761,7 @@ return view.extend({
 			case 'addr':
 				return cmpAddr(x, y);
 			case 'mac':
-				return macOf(x).localeCompare(macOf(y));
+				return firstMac(x).localeCompare(firstMac(y));
 			case 'traf':
 				return ((x.up || 0) + (x.down || 0)) - ((y.up || 0) + (y.down || 0));
 			case 'speed':
@@ -804,16 +822,11 @@ return view.extend({
 					let traf = E('td', { 'class': 'td pg-traf' });
 
 					if (c.up != null) {
-						const mk = arrow => {
-							const v = textEl('span', '', '');
+						ref.tu = arrowCell('pg-cn', '\u2191');
+						ref.td = arrowCell('pg-cn', '\u2193');
+						ref.tu.o.style.gridColumn = ref.td.o.style.gridColumn = '1';
 
-							return { v: v, o: E('span', { 'class': 'pg-cn', 'style': 'grid-column:1' }, [ textEl('span', 'pg-arr', arrow), v ]) };
-						};
-
-						ref.tu = mk('\u2191');
-						ref.td = mk('\u2193');
-
-						traf = E('td', { 'class': 'td pg-traf', 'title': _('Upload / Download') }, [
+						traf = E('td', { 'class': 'td pg-traf', 'title': _('Upload | Download') }, [
 							E('div', { 'class': 'pg-trafbox' }, [ ref.tu.o, textEl('span', 'pg-cs', '\u00a0'), ref.td.o, textEl('span', 'pg-cs', '\u00a0'), ref.rst = this.rowReset(c) ])
 						]);
 					}
@@ -836,27 +849,22 @@ return view.extend({
 					return;
 				}
 
-				const mk = (cls, arrow) => {
-					const v = textEl('span', '', '');
-
-					return { v: v, o: E('span', { 'class': cls }, [ textEl('span', 'pg-arr', arrow), v ]) };
-				};
-
 				const ref = {
-					tu: mk('pg-cn', '\u2191'), td: mk('pg-cn', '\u2193'),
-					su: mk('pg-cs pg-cs-up', '\u2191'), sd: mk('pg-cs pg-cs-dn', '\u2193')
+					tu: arrowCell('pg-cn', '\u2191'), td: arrowCell('pg-cn', '\u2193'),
+					su: arrowCell('pg-cs pg-cs-up', '\u2191'), sd: arrowCell('pg-cs pg-cs-dn', '\u2193')
 				};
 
 				this.clientRefs[c.id] = ref;
 
-				const traf = ref.traf = E('td', { 'class': 'td pg-traf', 'title': _('Upload / Download') }, [
+				const grp = groupByMac(c);
+				const traf = ref.traf = E('td', { 'class': 'td pg-traf', 'title': _('Upload | Download') }, [
 					E('div', { 'class': 'pg-trafbox' }, [ ref.tu.o, ref.su.o, ref.td.o, ref.sd.o, ref.rst = this.rowReset(c) ])
 				]);
 
 				ref.row = E('tr', { 'class': 'tr cbi-section-table-row cbi-rowstyle-' + (1 + i % 2) }, [
 					cell(hostLabel(c), 'pg-host'),
-					ref.addr = E('td', { 'class': 'td pg-addr' }, groupByMac(c).order.map(m => E('div', { 'class': 'pg-pair' },
-						groupByMac(c).by[m].map(a => textEl('div', 'pg-ip' + (a.ip.indexOf(':') > -1 ? ' pg-ip6' : ''), a.ip))
+					ref.addr = E('td', { 'class': 'td pg-addr' }, grp.order.map(m => E('div', { 'class': 'pg-pair' },
+						grp.by[m].map(a => textEl('div', 'pg-ip' + (isV6(a.ip) ? ' pg-ip6' : ''), a.ip))
 							.concat([ textEl('div', 'pg-mac', m) ])
 					))),
 					traf,
@@ -877,9 +885,13 @@ return view.extend({
 			if (!ref)
 				return;
 
-			if (ref.inactive) {
+			const forget = () => {
 				delete this.lastClient[c.id];
 				this.lastRate[c.id] = 0;
+			};
+
+			if (ref.inactive) {
+				forget();
 
 				if (ref.tu && c.up != null) {
 					ref.tu.v.textContent = formatBytes(c.up);
@@ -896,9 +908,8 @@ return view.extend({
 
 			(c.addrs || []).forEach(a => {
 				const pa = this.lastAddr[a.ip];
-				const r = (cur, old) => (old !== undefined && cur >= old && dt > 0) ? (cur - old) / dt : 0;
 
-				arate[a.ip] = { up: r(a.up || 0, pa && pa.up), down: r(a.down || 0, pa && pa.down) };
+				arate[a.ip] = { up: rateOf(a.up || 0, pa && pa.up, dt), down: rateOf(a.down || 0, pa && pa.down, dt) };
 				this.lastAddr[a.ip] = { up: a.up || 0, down: a.down || 0 };
 			});
 
@@ -909,16 +920,12 @@ return view.extend({
 
 			if (up == null || down == null) {
 				ref.tu.v.textContent = ref.td.v.textContent = ref.su.v.textContent = ref.sd.v.textContent = '\u2014';
-				delete this.lastClient[c.id];
-				this.lastRate[c.id] = 0;
+				forget();
 				return;
 			}
 
 			const prev = this.lastClient[c.id];
-
-			const rate = (cur, old) => (old !== undefined && cur >= old && dt > 0) ? (cur - old) / dt : 0;
-
-			const ru = rate(up, prev && prev.up), rd = rate(down, prev && prev.down);
+			const ru = rateOf(up, prev && prev.up, dt), rd = rateOf(down, prev && prev.down, dt);
 
 			ref.tu.v.textContent = formatBytes(up);
 			ref.td.v.textContent = formatBytes(down);
