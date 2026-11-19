@@ -685,7 +685,7 @@ return view.extend({
 
 		const tr = E('tr', { 'class': 'tr cbi-section-table-titles' }, [
 			th('host', _('Hostname')),
-			split('addr', _('IP Address'), 'mac', _('MAC')),
+			split('addr', _('IP'), 'mac', _('MAC')),
 			split('traf', _('Traffic'), 'speed', _('Speed'), this.hdrRst = resetBtn('pg-rst-all', _('Reset all statistics'),
 				() => this.confirmReset(_('Reset the traffic statistics of all VPN clients? The saved totals and the current counters are cleared.'), callResetAll))),
 			th('type', _('Type')),
