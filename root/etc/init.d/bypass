@@ -189,6 +189,7 @@ manage_natmap() {
     local natmap_en="$1"
     local stun_script="/usr/share/bypass/scripts/stun_sync.sh"
 
+    acct_cli bank
     if [ "$natmap_en" -eq 1 ] && [ -f "$stun_script" ]; then
         nft flush chain inet bypass_logic static_privilege_output
         if ! nft list chain inet bypass_logic static_privilege_output | grep -q "STUN-UDP-Direct"; then
@@ -267,6 +268,7 @@ define_instances() {
 }
 
 refresh_nft() {
+    acct_cli bank
     setup_nft
     sync_clients
 }
