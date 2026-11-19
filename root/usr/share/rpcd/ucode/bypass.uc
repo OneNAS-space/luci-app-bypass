@@ -3,7 +3,7 @@
 
 import { cursor } from 'uci';
 import { popen, access, writefile } from 'fs';
-import { load_live, seen, counters, read_store, reset_all, reset_macs } from 'bypass.acct';
+import { load_live, seen, counters, read_store, reset_all, reset_macs, load_rule_bank } from 'bypass.acct';
 
 const CONF = 'bypass';
 const SECTION = 'global';
@@ -141,6 +141,23 @@ function collect_rules(chains, show_qb) {
 	const rules = [];
 	const agg = {};
 	const order = [];
+	const bank = load_rule_bank();
+	const banked = {};
+	const banked_nat = {};
+
+	for (let k in keys(bank)) {
+		const v = bank[k];
+
+		if (type(v) != 'object')
+			continue;
+
+		const t = (substr(k, 0, 2) == 'n|') ? banked_nat : banked;
+		const name = (t === banked) ? normalize_key(substr(k, 2)) : substr(k, 2);
+
+		t[name] ??= { p: 0, b: 0 };
+		t[name].p += int(v.p ?? 0);
+		t[name].b += int(v.b ?? 0);
+	}
 
 	for (let name in [ 'static_privilege', 'static_privilege_output', 'dynamic_logic' ]) {
 		for (let line in (chains[name] ?? [])) {
@@ -165,8 +182,11 @@ function collect_rules(chains, show_qb) {
 		}
 	}
 
-	for (let key in order)
+	for (let key in order) {
+		agg[key].packets += banked[key]?.p ?? 0;
+		agg[key].bytes += banked[key]?.b ?? 0;
 		push(rules, agg[key]);
+	}
 
 	const nat = {};
 	const nat_order = [];
@@ -199,8 +219,8 @@ function collect_rules(chains, show_qb) {
 
 		push(rules, {
 			name: join('/', sort(keys(n.protos))) + '-Fix: ' + n.dport,
-			packets: n.packets,
-			bytes: n.bytes,
+			packets: n.packets + (banked_nat[key]?.p ?? 0),
+			bytes: n.bytes + (banked_nat[key]?.b ?? 0),
 			comment: 'NAT / Dual-Stack Forward -> :' + n.target_port
 		});
 	}
