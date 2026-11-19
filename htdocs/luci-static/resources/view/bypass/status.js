@@ -399,7 +399,7 @@ function emptyRow(cols, text) {
 }
 
 function ruleHeader() {
-	return headerRow([ _('Rule Name'), _('Packets'), _('Bytes'), _('Speed'), _('Action | Comment') ]);
+	return headerRow([ _('Rule Name'), _('Packets'), _('Traffic'), _('Speed'), _('Action | Comment') ]);
 }
 
 function headerRow(titles) {
@@ -659,7 +659,7 @@ return view.extend({
 				rows.push(E('tr', { 'class': 'tr cbi-section-table-row cbi-rowstyle-' + (1 + i % 2) + (r.total ? ' pg-total' : '') }, [
 					cell(textEl('span', '', r.name), 'pg-rname'),
 					cell(pk, 'pg-rpk', _('Packets')),
-					E('td', { 'class': 'td pg-rby', 'data-title': _('Bytes') }, [ by, sp ]),
+					E('td', { 'class': 'td pg-rby', 'data-title': _('Traffic') }, [ by, sp ]),
 					cell(sp2, 'pg-rsp'),
 					cell(actionBadge(r.comment || ''), 'pg-ract')
 				]));
@@ -679,7 +679,7 @@ return view.extend({
 			ref.pk.textContent = String(r.packets);
 			ref.by.textContent = formatBytes(cur);
 			const speed = (prev !== undefined && cur > prev && dt > 0)
-				? '\u2191 ' + formatBytes((cur - prev) / dt) + '/s' : '';
+				? formatBytes((cur - prev) / dt) + '/s' : '';
 
 			ref.sp.textContent = speed ? ' ' + speed : '';
 			ref.sp2.textContent = speed;
