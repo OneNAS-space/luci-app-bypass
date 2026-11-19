@@ -6,6 +6,7 @@ import { popen, readfile, writefile, rename } from 'fs';
 const NFT = '/usr/sbin/nft';
 const TABLE = 'inet bypass_logic';
 const STORE = '/tmp/bypass_acct.json';
+const RSTORE = '/tmp/bypass_rulestats.json';
 const ACCT_SETS = [ 'acct_up4', 'acct_up6', 'acct_dn4', 'acct_dn6' ];
 
 export const DEFAULT_TTL = 2592000;
@@ -214,4 +215,84 @@ export function reset_macs(macs) {
 
 	drop_elements(live, ips, ACCT_SETS);
 	write_store(st);
+}
+
+/* Rule counters (Traffic Statistics tab). The rules are re-created on every reload, which sets their counters back
+   to zero, so the counters are moved into RSTORE first: "nft reset rules" returns the current values and zeroes
+   them in one step, which makes it safe to call at any time (nothing is counted twice). The page shows RSTORE + live.
+   Keys: "r|<comment>" for the chain rules, "n|<dport>_<target port>" for the qB port forwards. */
+export function load_rule_bank() {
+	let doc = null;
+
+	try {
+		doc = json(readfile(RSTORE) ?? '{}');
+	}
+	catch (e) {
+		doc = null;
+	}
+
+	return (type(doc) == 'object') ? doc : {};
+}
+
+export function bank_rules() {
+	const text = run(NFT + ' -p reset rules table ' + TABLE);
+
+	if (!text)
+		return;
+
+	const bank = load_rule_bank();
+	let cur = null;
+	let changed = false;
+
+	for (let line in split(text, '\n')) {
+		const t = trim(line);
+		const m = match(t, /^chain ([A-Za-z0-9_]+) \{$/);
+
+		if (m) {
+			cur = m[1];
+			continue;
+		}
+
+		if (t == '}') {
+			cur = null;
+			continue;
+		}
+
+		const c = match(t, /counter packets ([0-9]+) bytes ([0-9]+)/);
+
+		if (!cur || !c || (!int(c[1]) && !int(c[2])))
+			continue;
+
+		let key = null;
+
+		if (cur == 'qb_fix') {
+			const d = match(t, /([a-z]+) dport ([0-9]+)/);
+			const g = match(t, / to ([^ ]+)/);
+			const tp = g ? match(g[1], /:([0-9]+)$/) : null;
+
+			if (d && g)
+				key = 'n|' + d[2] + '_' + (tp ? tp[1] : g[1]);
+		}
+		else {
+			const k = match(t, /comment "([^"]*)"/);
+
+			if (k)
+				key = 'r|' + k[1];
+		}
+
+		if (!key)
+			continue;
+
+		const e = bank[key] ?? { p: 0, b: 0 };
+
+		e.p = int(e.p ?? 0) + int(c[1]);
+		e.b = int(e.b ?? 0) + int(c[2]);
+		bank[key] = e;
+		changed = true;
+	}
+
+	if (changed) {
+		writefile(RSTORE + '.tmp', sprintf('%J', bank));
+		rename(RSTORE + '.tmp', RSTORE);
+	}
 }
