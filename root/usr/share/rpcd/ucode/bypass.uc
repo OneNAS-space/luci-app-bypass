@@ -79,30 +79,30 @@ function normalize_key(comment) {
 function friendly_action(key) {
 	if (index(key, 'Direct') >= 0) {
 		if (index(key, 'BT') >= 0 || index(key, 'qB') >= 0)
-			return 'Direct / BitTorrent';
+			return 'Direct | BitTorrent';
 		if (index(key, 'P2P-Tunnel-Setup') >= 0)
-			return 'Direct / P2P Tunnel Setup (port 7844)';
+			return 'Direct | P2P Tunnel Setup (port 7844)';
 		if (index(key, 'CN-Direct') >= 0)
-			return 'Direct / China IP Address';
+			return 'Direct | China IP Address';
 		if (index(key, 'STUN-Direct') >= 0)
-			return 'Direct / STUN Penetration';
+			return 'Direct | STUN Penetration';
 
 		if (index(key, 'Non-VPN-Client') >= 0)
-			return 'Direct / Non-VPN Devices';
+			return 'Direct | Non-VPN Devices';
 
-		return 'Direct / Bypass';
+		return 'Direct | Bypass';
 	}
 
 	if (index(key, 'PASS') >= 0)
-		return 'Proxy / Agent Redirect';
+		return 'Proxy | Agent Redirect';
 
 	if (index(key, 'Fix') >= 0 || index(key, 'Loopback') >= 0) {
 		if (index(key, 'Local') >= 0)
-			return 'System / Router Self-Agent Redirect';
+			return 'System | Router Self-Agent Redirect';
 		if (index(key, 'Loopback') >= 0)
-			return 'System / Loopback Bypass';
+			return 'System | Loopback Bypass';
 
-		return 'System / Routing Fix';
+		return 'System | Routing Fix';
 	}
 
 	return '—';
@@ -218,10 +218,10 @@ function collect_rules(chains, show_qb) {
 		const n = nat[key];
 
 		push(rules, {
-			name: join('/', sort(keys(n.protos))) + '-Fix: ' + n.dport,
+			name: join('|', sort(keys(n.protos))) + '-Fix: ' + n.dport,
 			packets: n.packets + (banked_nat[key]?.p ?? 0),
 			bytes: n.bytes + (banked_nat[key]?.b ?? 0),
-			comment: 'NAT / Dual-Stack Forward -> :' + n.target_port
+			comment: 'NAT | Dual-Stack Forward -> :' + n.target_port
 		});
 	}
 
@@ -496,4 +496,3 @@ const methods = {
 };
 
 return { 'luci.bypass': methods };
-
