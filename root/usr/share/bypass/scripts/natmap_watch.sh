@@ -59,6 +59,8 @@ add rule inet $TABLE qb_fix iifname __WAN__ meta nfproto ipv6 tcp dport $port co
     [ "$ONCE" = 0 ] && [ "$sig" = "$LAST_SIG" ] && return 0
 
     wan=$(wan_set)
+    # keep the rule counters of the Traffic Statistics tab across the rewrite
+    [ -f /usr/share/bypass/scripts/acct.uc ] && ucode /usr/share/bypass/scripts/acct.uc bank 2>/dev/null
     err=$({
         echo "flush set inet $TABLE qb_dynamic_ports"
         echo "flush set inet $TABLE qb_outer_ports"
