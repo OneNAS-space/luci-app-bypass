@@ -9,15 +9,15 @@ include $(INCLUDE_DIR)/package.mk
 PKG_LICENSE:=GPL-3.0-or-later
 PKG_MAINTAINER:=Jackie Han <jackie.han@gmail.com>
 PKG_NAME:=luci-app-bypass
-PKG_VERSION:=1.0.4
-PKG_RELEASE:=2
+PKG_VERSION:=1.1.0
+PKG_RELEASE:=1
 
 define Package/$(PKG_NAME)
 	SECTION:=luci
 	CATEGORY:=LuCI
 	SUBMENU:=3. Applications
 	TITLE:=LuCI support for Bypass (PassWall2 bypass logic)
-	DEPENDS:=+luci-base +rpcd-mod-ucode +ucode-mod-fs +ucode-mod-uci
+	DEPENDS:=+luci-base +rpcd-mod-ucode +ucode +ucode-mod-fs +ucode-mod-uci
 	CONFLICTS:=luci-app-advanced luci-app-pw2-guard
 	PKGARCH:=all
 endef
@@ -46,6 +46,10 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/usr/share/bypass/scripts
 	$(INSTALL_BIN) ./root/usr/share/bypass/scripts/natmap_watch.sh $(1)/usr/share/bypass/scripts/natmap_watch.sh
 	$(INSTALL_BIN) ./root/usr/share/bypass/scripts/stun_sync.sh $(1)/usr/share/bypass/scripts/stun_sync.sh
+	$(INSTALL_DATA) ./root/usr/share/bypass/scripts/acct.uc $(1)/usr/share/bypass/scripts/acct.uc
+
+	$(INSTALL_DIR) $(1)/usr/share/ucode/bypass
+	$(INSTALL_DATA) ./root/usr/share/ucode/bypass/acct.uc $(1)/usr/share/ucode/bypass/acct.uc
 
 	$(INSTALL_DIR) $(1)/usr/share/rpcd/ucode
 	$(INSTALL_DATA) ./root/usr/share/rpcd/ucode/bypass.uc $(1)/usr/share/rpcd/ucode/bypass.uc
