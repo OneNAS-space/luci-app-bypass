@@ -89,6 +89,7 @@ const CSS =
 	'.pg-clients .pg-sortind:empty { display:none; }' +
 	'.pg-tbl, .pg-tbl .tr.cbi-section-table-titles, .pg-tbl .tr:first-child, .pg-tbl .tr:first-child > .th, .pg-tbl .th { border-top-left-radius:0 !important; border-top-right-radius:0 !important; }' +
 	'.pg-clients .th.pg-split { padding:0 !important; }' +
+	'.pg-clients .pg-hg { display:contents; }' +
 	'.pg-clients .pg-sort-half { display:inline-block; padding:.6rem .5rem; }' +
 	'.pg-rules .tr.pg-total .td { font-weight:bold; }' +
 	'@container (min-width: ' + RULES_TABLE_MIN + 'px) {' +
@@ -100,13 +101,17 @@ const CSS =
 	'  .pg-clients .td.pg-host, .pg-clients .td.pg-tag { white-space:normal; }' +
 	'  .pg-clients .td.pg-host { overflow-wrap:anywhere; }' +
 	'  .pg-clients { table-layout:fixed; }' +
-	'  .pg-clients .pg-rst { display:inline-block; }' +
-	'  .pg-clients .pg-trafbox { grid-template-columns:auto auto auto; }' +
+	'  .pg-clients .pg-rst { display:inline-block; margin:0; }' +
+	'  .pg-clients .pg-trafbox, .pg-clients .pg-hg { display:inline-grid; grid-template-columns:6.1rem 1.5rem 4.7rem; column-gap:0; }' +
+	'  .pg-clients .pg-hg { align-items:center; }' +
+	'  .pg-clients .pg-hg1 { justify-self:end; }' +
+	'  .pg-clients .pg-hg3 { justify-self:start; white-space:nowrap; }' +
+	'  .pg-clients .pg-hg > .pg-rst { margin:0; justify-self:center; }' +
 	'  .pg-clients .pg-trafbox > :nth-child(1) { grid-area:1 / 1; }' +
 	'  .pg-clients .pg-trafbox > :nth-child(2) { grid-area:1 / 3; }' +
 	'  .pg-clients .pg-trafbox > :nth-child(3) { grid-area:2 / 1; }' +
 	'  .pg-clients .pg-trafbox > :nth-child(4) { grid-area:2 / 3; }' +
-	'  .pg-clients .pg-trafbox > .pg-rst { grid-area:1 / 2 / 3 / 3; align-self:center; }' +
+	'  .pg-clients .pg-trafbox > .pg-rst { grid-area:1 / 2 / 3 / 3; align-self:center; justify-self:center; }' +
 	'  .pg-clients .pg-cn { justify-content:flex-end; }' +
 	'  .pg-clients .pg-cs { justify-content:flex-start; }' +
 	'  .pg-clients .tr > :nth-child(1) { width:18%; }' +
@@ -679,9 +684,11 @@ return view.extend({
 
 		const th = (key, label) => target(key, label, 'th cbi-section-table-th', 'th');
 
-		const split = (k1, l1, k2, l2, mid) => E('th', { 'class': 'th cbi-section-table-th pg-split' }, [
-			target(k1, l1, 'pg-sort-half', 'span'), mid, '/', target(k2, l2, 'pg-sort-half', 'span')
-		].filter(n => n != null));
+		const split = (k1, l1, k2, l2, mid) => E('th', { 'class': 'th cbi-section-table-th pg-split' }, [ E('div', { 'class': 'pg-hg' }, [
+			E('span', { 'class': 'pg-hg1' }, [ target(k1, l1, 'pg-sort-half', 'span') ]),
+			mid,
+			E('span', { 'class': 'pg-hg3' }, [ '/', target(k2, l2, 'pg-sort-half', 'span') ])
+		].filter(n => n != null)) ]);
 
 		const tr = E('tr', { 'class': 'tr cbi-section-table-titles' }, [
 			th('host', _('Hostname')),
