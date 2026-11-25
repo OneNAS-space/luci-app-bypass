@@ -86,7 +86,8 @@ function friendly_action(key) {
 			return 'Direct | China IP Address';
 		if (index(key, 'STUN-Direct') >= 0)
 			return 'Direct | STUN Penetration';
-
+		if (index(key, 'Non-VPN-DNS') >= 0)
+			return 'Direct | Non-VPN Devices DNS';
 		if (index(key, 'Non-VPN-Client') >= 0)
 			return 'Direct | Non-VPN Devices';
 
