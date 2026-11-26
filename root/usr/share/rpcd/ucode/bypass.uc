@@ -186,8 +186,17 @@ function collect_rules(chains, show_qb) {
 	for (let key in order) {
 		agg[key].packets += banked[key]?.p ?? 0;
 		agg[key].bytes += banked[key]?.b ?? 0;
-		push(rules, agg[key]);
 	}
+
+	const top = [ 'Loopback-Fix', 'AGENT-PASS', 'Local-Fix' ];
+
+	for (let key in top)
+		if (agg[key])
+			push(rules, agg[key]);
+
+	for (let key in order)
+		if (index(top, key) < 0)
+			push(rules, agg[key]);
 
 	const nat = {};
 	const nat_order = [];
