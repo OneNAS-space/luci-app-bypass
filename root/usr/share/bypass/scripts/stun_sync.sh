@@ -1,6 +1,10 @@
 #!/bin/sh
 
-STUN_URL="https://raw.githubusercontent.com/muink/rfc5780-stun-server/master/valid_hosts_rfc5780.txt"
+STUN_URLS="
+https://raw.githubusercontent.com/muink/rfc5780-stun-server/master/valid_hosts_rfc5780.txt
+https://gh-proxy.com/https://raw.githubusercontent.com/muink/rfc5780-stun-server/master/valid_hosts_rfc5780.txt
+"
+STUN_DEFAULT="/usr/share/bypass/stun_servers.default.txt"
 STUN_CACHE="/tmp/stun_servers.txt"
 STUN_ETAG="/tmp/stun_servers.etag"
 EXTRA_STATE="/tmp/stun_extra.list"
@@ -31,26 +35,60 @@ fi
 echo $$ > "$LOCK_DIR/pid"
 trap 'rm -rf "$LOCK_DIR"' EXIT INT TERM
 
+fetch_list() {
+    local out="$1"
+    local hdr="$LOCK_DIR/header"
+    local etag=""
+    local url status
+
+    if [ -s "$STUN_CACHE" ] && [ -f "$STUN_ETAG" ]; then
+        etag=$(cat "$STUN_ETAG")
+    fi
+
+    for url in $STUN_URLS; do
+        rm -f "$out" "$hdr"
+        if [ -n "$etag" ]; then
+            curl -sL -D "$hdr" --connect-timeout 5 --max-time 20 -H "If-None-Match: $etag" "$url" -o "$out" 2>/dev/null
+        else
+            curl -sL -D "$hdr" --connect-timeout 5 --max-time 20 "$url" -o "$out" 2>/dev/null
+        fi
+        status=$(grep "^HTTP/" "$hdr" 2>/dev/null | tail -n1 | tr -d '\r' | awk '{print $2}')
+
+        if [ "$status" = "304" ] && [ -n "$etag" ]; then
+            rm -f "$out" "$hdr"
+            return 2
+        fi
+
+        if [ "$status" = "200" ] && [ -s "$out" ] \
+            && ! grep -qiE '<(html|!doctype)' "$out" \
+            && grep -qE '^[A-Za-z0-9.-]+:[0-9]+' "$out"; then
+            grep -i "^etag:" "$hdr" | tail -n1 | sed 's/^[^:]*: *//' | tr -d '\r' > "$STUN_ETAG"
+            logger -t bypass "STUN: list downloaded from $url"
+            rm -f "$hdr"
+            return 0
+        fi
+    done
+
+    rm -f "$out" "$hdr"
+    return 1
+}
+
 sync_stun() {
     local force="$1"
-    local tmp_header="$LOCK_DIR/header"
     local tmp_body="$LOCK_DIR/body"
-    local etag=""
-    [ -f "$STUN_ETAG" ] && etag=$(cat "$STUN_ETAG")
 
-    if [ -n "$etag" ]; then
-        curl -sL -D "$tmp_header" --connect-timeout 5 --max-time 30 -H "If-None-Match: $etag" "$STUN_URL" -o "$tmp_body"
-    else
-        curl -sL -D "$tmp_header" --connect-timeout 5 --max-time 30 "$STUN_URL" -o "$tmp_body"
-    fi
-    local status=$(grep "^HTTP/" "$tmp_header" 2>/dev/null | tail -n1 | tr -d '\r' | awk '{print $2}')
-
-    if [ "$status" = "200" ] && [ -s "$tmp_body" ]; then
-        grep -i "^etag:" "$tmp_header" | tail -n1 | sed 's/^[^:]*: *//' | tr -d '\r' > "$STUN_ETAG"
+    fetch_list "$tmp_body"
+    local rc=$?
+    if [ "$rc" = "0" ]; then
         mv "$tmp_body" "$STUN_CACHE"
         force=1
+    elif [ "$rc" = "1" ]; then
+        logger -t bypass "STUN: all download sources failed, using cache/built-in list."
+        if [ ! -s "$STUN_CACHE" ] && [ -s "$STUN_DEFAULT" ]; then
+            cp "$STUN_DEFAULT" "$STUN_CACHE"
+        fi
     fi
-    rm -f "$tmp_header" "$tmp_body"
+    rm -f "$tmp_body"
 
     local extra_list=$(printf '%s\n' "$EXTRA_DOMAINS" | grep -vE '^[[:space:]]*(#|$)' | tr -d '\r')
     local old_list=$(cat "$EXTRA_STATE" 2>/dev/null)
