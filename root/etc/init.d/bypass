@@ -115,6 +115,7 @@ setup_nft() {
         echo "add chain inet bypass_logic dynamic_logic { type filter hook prerouting priority -400; policy accept; }"
         echo "flush chain inet bypass_logic dynamic_logic"
         echo "add rule inet bypass_logic dynamic_logic iifname \"$LAN_IF\" ether saddr != @vpn_macs meta l4proto { tcp, udp } th dport 53 counter meta mark set 0xff accept comment \"Non-VPN-DNS-Direct\""
+        echo "add rule inet bypass_logic dynamic_logic iifname \"$LAN_IF\" ether saddr @vpn_macs meta l4proto { tcp, udp } th dport 53 fib daddr type != local counter meta mark set 0xff accept comment \"VPN-External-DNS-Direct\""
         echo "add rule inet bypass_logic dynamic_logic fib daddr type local meta mark != 0xff counter return comment \"Local-Fix\""
         [ -n "$lan_addr" ] && echo "add rule inet bypass_logic dynamic_logic ip daddr $lan_addr counter return comment \"Loopback-Fix\""
         [ -n "$lan_addr6" ] && echo "add rule inet bypass_logic dynamic_logic ip6 daddr $lan_addr6 counter return comment \"Loopback-v6-Fix\""
