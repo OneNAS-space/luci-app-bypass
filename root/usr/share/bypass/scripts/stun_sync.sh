@@ -3,7 +3,7 @@
 STUN_URL="https://raw.githubusercontent.com/muink/rfc5780-stun-server/master/valid_hosts_rfc5780.txt"
 STUN_CACHE="/tmp/stun_servers.txt"
 STUN_ETAG="/tmp/stun_servers.etag"
-EXTRA_SIG="/tmp/stun_extra.sig"
+EXTRA_STATE="/tmp/stun_extra.list"
 TABLE="bypass_logic"
 SET_NAME="stun_direct"
 LOCK_DIR="/tmp/stun_sync.lock"
@@ -53,9 +53,8 @@ sync_stun() {
     rm -f "$tmp_header" "$tmp_body"
 
     local extra_list=$(printf '%s\n' "$EXTRA_DOMAINS" | grep -vE '^[[:space:]]*(#|$)' | tr -d '\r')
-    local extra_sig=$(printf '%s\n' "$extra_list" | cksum | awk '{print $1}')
-    local old_sig=$(cat "$EXTRA_SIG" 2>/dev/null)
-    if [ "$extra_sig" != "$old_sig" ]; then
+    local old_list=$(cat "$EXTRA_STATE" 2>/dev/null)
+    if [ "$extra_list" != "$old_list" ]; then
         force=1
     fi
 
@@ -103,7 +102,7 @@ sync_stun() {
     nft -f "$nft_cmd" 2>/dev/null
     rm -f "$nft_cmd" "$add_cmd"
 
-    echo "$extra_sig" > "$EXTRA_SIG"
+    printf '%s\n' "$extra_list" > "$EXTRA_STATE"
 
     local final_count=$(nft list set inet $TABLE $SET_NAME 2>/dev/null | tr ',' '\n' | grep -cE '([0-9]{1,3}\.){3}[0-9]{1,3}')
     [ -f "$STUN_CACHE" ] && touch "$STUN_CACHE"
