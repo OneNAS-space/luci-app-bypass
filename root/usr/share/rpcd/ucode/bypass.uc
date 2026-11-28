@@ -90,6 +90,8 @@ function friendly_action(key) {
 			return 'Direct | Non-VPN Devices DNS';
 		if (index(key, 'Non-VPN-Client') >= 0)
 			return 'Direct | Non-VPN Devices';
+		if (index(key, 'VPN-External-DNS') >= 0)
+			return 'Direct | VPN External DNS';
 
 		return 'Direct | Bypass';
 	}
